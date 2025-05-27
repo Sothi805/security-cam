@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>CCTV Stream Viewer</title>
+  <style>
+    body {
+      max-width: 100%;
+      margin: 0;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+      background: #000;
+      color: #fff;
+    }
+    .video-container {
+      width: 100%;
+      margin: 20px 0;
+      display: flex;
+      justify-content: center;
+    }
+    .video-container video {
+      max-width: 100%;
+      height: auto;
+      background: #000;
+    }
+    h1, h2 {
+      color: #fff;
+      margin: 0 0 10px 0;
+    }
+    .controls {
+      margin: 20px 0;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    select {
+      padding: 8px;
+      font-size: 16px;
+      min-width: 200px;
+      background: #333;
+      color: #fff;
+      border: 1px solid #666;
+    }
+    .status {
+      color: #999;
+      font-size: 0.9em;
+      margin-left: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>CCTV Stream Viewer</h1>
+
+  <div class="controls">
+    <select id="cameraSelect">
+      <option value="">Select a camera</option>
+    </select>
+    <span id="status" class="status"></span>
+  </div>
+
+  <div class="video-container" id="videoContainer"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <script>
+    const cameras = [
+      {id: "001", name: "Camera 1"},
+      {id: "102", name: "Camera 2"}
+    ];
+
+    const videoContainer = document.getElementById('videoContainer');
+    const cameraSelect = document.getElementById('cameraSelect');
+    const status = document.getElementById('status');
+
+    let currentHls = null;
+    let currentVideo = null;
+
+    // Populate camera select options
+    cameras.forEach(camera => {
+      const option = document.createElement('option');
+      option.value = camera.id;
+      option.textContent = camera.name;
+      cameraSelect.appendChild(option);
+    });
+
+    function loadCamera(cameraId) {
+      // Clear previous video if exists
+      if (currentHls) {
+        currentHls.destroy();
+        currentHls = null;
+      }
+      videoContainer.innerHTML = '';
+      status.textContent = '';
+
+      if (!cameraId) return;
+
+      const camera = cameras.find(c => c.id === cameraId);
+      if (!camera) return;
+
+      status.textContent = 'Connecting...';
+
+      const title = document.createElement('h2');
+      title.textContent = camera.name;
+      
+      const video = document.createElement('video');
+      video.controls = true;
+      video.autoplay = true;
+      video.muted = true;
+      video.playsInline = true;
+      
+      videoContainer.appendChild(title);
+      videoContainer.appendChild(video);
+      currentVideo = video;
+
+      fetch(`/streams/${camera.id}`)
+        .then(res => res.json())
+        .then(({ stream }) => {
+          if (Hls.isSupported()) {
+            currentHls = new Hls({
+              maxBufferLength: 30,
+              maxMaxBufferLength: 60,
+              liveSyncDurationCount: 3,
+              liveMaxLatencyDurationCount: 10,
+              enableWorker: true
+            });
+            currentHls.loadSource(stream);
+            currentHls.attachMedia(video);
+            currentHls.on(Hls.Events.MANIFEST_PARSED, () => {
+              video.play()
+                .then(() => {
+                  status.textContent = 'Streaming';
+                })
+                .catch(err => {
+                  console.error('Error playing video:', err);
+                  status.textContent = 'Error: Could not play video';
+                });
+            });
+            currentHls.on(Hls.Events.ERROR, (event, data) => {
+              if (data.fatal) {
+                status.textContent = 'Error: Stream connection lost. Retrying...';
+                switch (data.type) {
+                  case Hls.ErrorTypes.NETWORK_ERROR:
+                    console.log('Network error, trying to recover...');
+                    currentHls.startLoad();
+                    break;
+                  case Hls.ErrorTypes.MEDIA_ERROR:
+                    console.log('Media error, trying to recover...');
+                    currentHls.recoverMediaError();
+                    break;
+                  default:
+                    console.error('Fatal error:', data);
+                    status.textContent = 'Error: Could not load stream';
+                    break;
+                }
+              }
+            });
+          } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            video.src = stream;
+            video.addEventListener('loadedmetadata', () => {
+              video.play()
+                .then(() => {
+                  status.textContent = 'Streaming';
+                })
+                .catch(err => {
+                  console.error('Error playing video:', err);
+                  status.textContent = 'Error: Could not play video';
+                });
+            });
+          } else {
+            status.textContent = 'Error: HLS not supported in this browser';
+          }
+        })
+        .catch(err => {
+          console.error(`Fetch /streams error for ${camera.name}:`, err);
+          status.textContent = 'Error: Could not connect to stream';
+        });
+    }
+
+    // Event Listeners
+    cameraSelect.addEventListener('change', (e) => loadCamera(e.target.value));
+  </script>
+</body>
+</html>

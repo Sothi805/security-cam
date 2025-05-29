@@ -88,16 +88,14 @@ class StreamManager {
         const streamKey = `${cameraId}-${quality}`;
         
         process.stdout.on('data', (data) => {
-            if (config.debugMode) {
-                logger.debug(`FFmpeg stdout [${streamKey}]:`, data.toString().trim());
-            }
+            // Always log stdout to see what's happening
+            logger.info(`FFmpeg stdout [${streamKey}]:`, data.toString().trim());
         });
 
         process.stderr.on('data', (data) => {
             const message = data.toString().trim();
-            if (config.debugMode) {
-                logger.debug(`FFmpeg stderr [${streamKey}]:`, message);
-            }
+            // Always log stderr to see what's happening
+            logger.info(`FFmpeg stderr [${streamKey}]:`, message);
             
             // Look for error patterns
             if (message.includes('Connection refused') || message.includes('Network is unreachable')) {

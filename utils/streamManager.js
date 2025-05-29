@@ -139,7 +139,7 @@ class StreamManager {
                 this.updateStreamStatus(cameraId, quality, 'running');
                 this.resetRestartAttempts(cameraId, quality);
             }
-        }, 5000);
+        }, 15000); // Increased from 5 seconds to 15 seconds for transcoding startup
     }
 
     // Stop a specific quality stream
@@ -157,7 +157,7 @@ class StreamManager {
                         logger.warn(`Force killing ${quality} stream for camera ${cameraId}`);
                         streams[quality].kill('SIGKILL');
                     }
-                }, 5000);
+                }, 10000); // Increased from 5 seconds to 10 seconds
                 
                 delete streams[quality];
                 this.updateStreamStatus(cameraId, quality, 'stopped');
@@ -335,7 +335,7 @@ class StreamManager {
             
             const stats = await fs.stat(streamPath);
             const ageMs = Date.now() - stats.mtime.getTime();
-            const maxAge = 30000; // 30 seconds
+            const maxAge = 120000; // 2 minutes - give FFmpeg time to start and transcode
             
             if (ageMs > maxAge) {
                 return { healthy: false, reason: 'file_stale', ageMs };

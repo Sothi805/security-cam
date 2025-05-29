@@ -197,6 +197,7 @@ class CameraTest {
                 '-print_format', 'json',
                 '-show_streams',
                 '-rtsp_transport', 'tcp',
+                '-user_agent', 'LibVLC/3.0.0',  // Critical for Hikvision compatibility
                 '-timeout', '10000000',  // 10 seconds
                 rtspUrl
             ], { stdio: 'pipe' });

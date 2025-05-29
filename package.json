@@ -5,9 +5,9 @@
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
-    "dev": "NODE_ENV=development nodemon app.js",
-    "dev:watch": "NODE_ENV=development nodemon --watch . --ext js,json app.js",
-    "prod": "NODE_ENV=production node app.js",
+    "dev": "set NODE_ENV=development && nodemon app.js",
+    "dev:watch": "set NODE_ENV=development && nodemon --watch . --ext js,json app.js",
+    "prod": "set NODE_ENV=production && node app.js",
     "pm2:start": "pm2 start ecosystem.config.js",
     "pm2:stop": "pm2 stop ecosystem.config.js",
     "pm2:restart": "pm2 restart ecosystem.config.js",
@@ -27,7 +27,9 @@
     "backup:config": "tar -czf backup-$(date +%Y%m%d).tar.gz .env ecosystem.config.js",
     "clean": "rm -rf hls/* logs/* node_modules/.cache",
     "validate": "node scripts/validate.js",
-    "install:all": "npm install && cd app_live && flutter pub get"
+    "install:all": "npm install && cd app_live && flutter pub get",
+    "network:setup": "scripts\\\\setup-network.bat",
+    "network:setup:unix": "chmod +x scripts/setup-network.sh && ./scripts/setup-network.sh"
   },
   "keywords": [
     "cctv",

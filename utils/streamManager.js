@@ -1,379 +1,365 @@
 const { spawn } = require('child_process');
-const moment = require('moment');
+const fs = require('fs-extra');
 const path = require('path');
+const moment = require('moment');
 const config = require('./config');
-const PathUtils = require('./pathUtils');
-const { streamLogger, systemLogger } = require('./logger');
+const logger = require('./logger');
 
 class StreamManager {
-  constructor() {
-    this.processes = new Map(); // camera_id -> { high: process, low: process }
-    this.restartAttempts = new Map(); // camera_id -> count
-    this.healthChecks = new Map(); // camera_id -> interval
-    this.isShuttingDown = false;
-  }
-
-  /**
-   * Start streaming for a specific camera with both quality variants
-   */
-  async startCamera(cameraId) {
-    streamLogger.info(`Starting streams for camera ${cameraId}`);
-    
-    try {
-      // Ensure directories exist
-      const livePaths = {
-        high: PathUtils.getLiveStreamPath(cameraId, 'high'),
-        low: PathUtils.getLiveStreamPath(cameraId, 'low')
-      };
-
-      await PathUtils.ensureDirectoryExists(livePaths.high.liveDir);
-      await PathUtils.ensureDirectoryExists(livePaths.low.liveDir);
-
-      // Start both quality streams
-      const highQualityProcess = await this.startStream(cameraId, 'high');
-      const lowQualityProcess = await this.startStream(cameraId, 'low');
-
-      this.processes.set(cameraId, {
-        high: highQualityProcess,
-        low: lowQualityProcess
-      });
-
-      // Reset restart attempts on successful start
-      this.restartAttempts.set(cameraId, 0);
-
-      // Start health monitoring
-      this.startHealthCheck(cameraId);
-
-      streamLogger.info(`Successfully started streams for camera ${cameraId}`);
-      return true;
-    } catch (error) {
-      streamLogger.error(`Failed to start camera ${cameraId}:`, error);
-      return false;
-    }
-  }
-
-  /**
-   * Start a single stream process
-   */
-  async startStream(cameraId, quality) {
-    const rtspUrl = this.buildRTSPUrl(cameraId);
-    const outputPaths = this.getOutputPaths(cameraId, quality);
-    
-    // Build FFmpeg arguments based on quality
-    const args = this.buildFFmpegArgs(rtspUrl, outputPaths, quality);
-    
-    streamLogger.info(`Starting ${quality} quality stream for camera ${cameraId}`, {
-      rtspUrl: rtspUrl.replace(/:.*@/, ':***@'), // Hide credentials in logs
-      outputPath: outputPaths.playlist
-    });
-
-    const process = spawn(config.ffmpeg.path, args);
-    
-    // Set up process event handlers
-    this.setupProcessHandlers(process, cameraId, quality);
-    
-    return process;
-  }
-
-  /**
-   * Build RTSP URL for camera
-   */
-  buildRTSPUrl(cameraId) {
-    const { user, pass, host, port } = config.cameras.rtsp;
-    return `rtsp://${user}:${pass}@${host}:${port}/Streaming/Channels/${cameraId}`;
-  }
-
-  /**
-   * Get output paths for different streaming modes
-   */
-  getOutputPaths(cameraId, quality) {
-    const livePaths = PathUtils.getLiveStreamPath(cameraId, quality);
-    
-    return {
-      playlist: livePaths.playlist,
-      segmentPattern: livePaths.segmentPattern,
-      liveDir: livePaths.liveDir
-    };
-  }
-
-  /**
-   * Build FFmpeg arguments based on quality setting
-   */
-  buildFFmpegArgs(rtspUrl, outputPaths, quality) {
-    const baseArgs = [
-      '-rtsp_transport', config.cameras.rtsp.transport,
-      '-i', rtspUrl,
-      '-avoid_negative_ts', 'make_zero',
-      '-fflags', '+genpts'
-    ];
-
-    let videoArgs = [];
-    
-    if (quality === 'low') {
-      // Low quality: 480p @ 15fps with encoding
-      videoArgs = [
-        '-c:v', 'libx264',
-        '-preset', config.quality.low.preset,
-        '-tune', 'zerolatency',
-        '-profile:v', config.quality.low.profile,
-        '-level', config.quality.low.level,
-        '-s', `${config.quality.low.width}x${config.quality.low.height}`,
-        '-r', config.quality.low.fps.toString(),
-        '-b:v', config.quality.low.bitrate,
-        '-maxrate', config.quality.low.bitrate,
-        '-bufsize', `${parseInt(config.quality.low.bitrate) * 2}M`,
-        '-g', (config.quality.low.fps * 2).toString(), // Keyframe every 2 seconds
-        '-keyint_min', config.quality.low.fps.toString(),
-        '-c:a', config.quality.audio.codec,
-        '-b:a', config.quality.audio.bitrate,
-        '-ar', config.quality.audio.sampleRate.toString()
-      ];
-    } else {
-      // High quality: copy original stream without encoding
-      videoArgs = [
-        '-c', 'copy'
-      ];
+    constructor() {
+        this.activeStreams = new Map(); // cameraId -> { low: process, high: process }
+        this.streamStatus = new Map(); // cameraId -> { low: status, high: status }
+        this.restartAttempts = new Map(); // cameraId-quality -> attempts
+        this.hourlyTimer = null;
+        this.setupHourlyRotation();
     }
 
-    const hlsArgs = [
-      '-f', 'hls',
-      '-hls_time', config.hls.segmentDuration.toString(),
-      '-hls_list_size', config.hls.listSize.toString(),
-      '-hls_flags', config.hls.flags,
-      '-hls_segment_filename', outputPaths.segmentPattern,
-      outputPaths.playlist
-    ];
-
-    return [...baseArgs, ...videoArgs, ...hlsArgs];
-  }
-
-  /**
-   * Set up process event handlers
-   */
-  setupProcessHandlers(process, cameraId, quality) {
-    process.stderr.on('data', (data) => {
-      const message = data.toString().trim();
-      if (message && !message.includes('ffmpeg version')) {
-        streamLogger.debug(`FFmpeg [${cameraId}-${quality}]: ${message}`);
-      }
-    });
-
-    process.on('close', (code) => {
-      streamLogger.warn(`Stream ${cameraId}-${quality} exited with code ${code}`);
-      
-      if (!this.isShuttingDown) {
-        this.handleProcessExit(cameraId, quality, code);
-      }
-    });
-
-    process.on('error', (error) => {
-      streamLogger.error(`Stream ${cameraId}-${quality} error:`, error);
-    });
-  }
-
-  /**
-   * Handle process exit and restart logic
-   */
-  async handleProcessExit(cameraId, quality, exitCode) {
-    const currentAttempts = this.restartAttempts.get(cameraId) || 0;
-    
-    if (currentAttempts >= config.system.maxRestartAttempts) {
-      streamLogger.error(`Max restart attempts reached for camera ${cameraId}. Giving up.`);
-      systemLogger.error(`Camera ${cameraId} failed permanently after ${currentAttempts} attempts`);
-      return;
-    }
-
-    // Increment restart attempts
-    this.restartAttempts.set(cameraId, currentAttempts + 1);
-    
-    streamLogger.info(`Restarting ${quality} stream for camera ${cameraId} (attempt ${currentAttempts + 1})`);
-    
-    // Wait before restarting
-    setTimeout(async () => {
-      try {
-        const newProcess = await this.startStream(cameraId, quality);
+    // Initialize streams for all cameras
+    async initializeStreams() {
+        logger.info('Initializing streams for all configured cameras');
         
-        // Update the process reference
-        const processes = this.processes.get(cameraId) || {};
-        processes[quality] = newProcess;
-        this.processes.set(cameraId, processes);
+        for (const cameraId of config.cameraIds) {
+            await this.startCameraStreams(cameraId);
+        }
         
-        streamLogger.info(`Successfully restarted ${quality} stream for camera ${cameraId}`);
-      } catch (error) {
-        streamLogger.error(`Failed to restart ${quality} stream for camera ${cameraId}:`, error);
-      }
-    }, config.system.restartDelaySeconds * 1000);
-  }
+        logger.info(`Initialized streams for ${config.cameraIds.length} cameras`);
+    }
 
-  /**
-   * Start health check monitoring for a camera
-   */
-  startHealthCheck(cameraId) {
-    const interval = setInterval(async () => {
-      await this.performHealthCheck(cameraId);
-    }, config.system.healthCheckIntervalSeconds * 1000);
-    
-    this.healthChecks.set(cameraId, interval);
-  }
+    // Start both quality streams for a camera
+    async startCameraStreams(cameraId) {
+        logger.info(`Starting streams for camera ${cameraId}`);
+        
+        // Ensure camera directory exists
+        const cameraDir = config.getCameraDirectory(cameraId);
+        await fs.ensureDir(cameraDir);
+        
+        // Start both quality streams
+        await this.startStream(cameraId, 'low');
+        await this.startStream(cameraId, 'high');
+        
+        this.updateStreamStatus(cameraId, 'low', 'starting');
+        this.updateStreamStatus(cameraId, 'high', 'starting');
+    }
 
-  /**
-   * Perform health check on camera streams
-   */
-  async performHealthCheck(cameraId) {
-    const processes = this.processes.get(cameraId);
-    if (!processes) return;
-
-    const issues = [];
-    
-    // Check if processes are still running
-    ['high', 'low'].forEach(quality => {
-      const process = processes[quality];
-      if (!process || process.killed || process.exitCode !== null) {
-        issues.push(`${quality} quality stream not running`);
-      }
-    });
-
-    // Check if playlist files exist and are recent
-    try {
-      const livePaths = {
-        high: PathUtils.getLiveStreamPath(cameraId, 'high'),
-        low: PathUtils.getLiveStreamPath(cameraId, 'low')
-      };
-
-      const fs = require('fs-extra');
-      const staleThreshold = Date.now() - (config.system.playlistStaleThresholdMinutes * 60 * 1000);
-      
-      for (const [quality, paths] of Object.entries(livePaths)) {
+    // Start a specific quality stream
+    async startStream(cameraId, quality) {
+        const streamKey = `${cameraId}-${quality}`;
+        
         try {
-          const stats = await fs.stat(paths.playlist);
-          if (stats.mtime.getTime() < staleThreshold) {
-            issues.push(`${quality} quality playlist is stale`);
-          }
+            // Stop existing stream if running
+            await this.stopStream(cameraId, quality);
+            
+            // Get FFmpeg command
+            const command = config.getFFmpegCommand(cameraId, quality);
+            const [ffmpegPath, ...args] = command;
+            
+            logger.debug(`Starting ${quality} stream for camera ${cameraId}`, { command: command.join(' ') });
+            
+            // Spawn FFmpeg process
+            const ffmpegProcess = spawn(ffmpegPath, args, {
+                stdio: ['ignore', 'pipe', 'pipe'],
+                detached: false
+            });
+
+            // Store process reference
+            if (!this.activeStreams.has(cameraId)) {
+                this.activeStreams.set(cameraId, {});
+            }
+            this.activeStreams.get(cameraId)[quality] = ffmpegProcess;
+
+            // Setup process event handlers
+            this.setupProcessHandlers(ffmpegProcess, cameraId, quality);
+            
+            logger.info(`Started ${quality} stream for camera ${cameraId} (PID: ${ffmpegProcess.pid})`);
+            
         } catch (error) {
-          issues.push(`${quality} quality playlist not found`);
+            logger.error(`Failed to start ${quality} stream for camera ${cameraId}:`, error);
+            this.updateStreamStatus(cameraId, quality, 'error');
+            
+            // Attempt restart if configured
+            if (config.autoRestart) {
+                this.scheduleRestart(cameraId, quality);
+            }
         }
-      }
-    } catch (error) {
-      systemLogger.error(`Health check error for camera ${cameraId}:`, error);
     }
 
-    if (issues.length > 0) {
-      systemLogger.warn(`Health check issues for camera ${cameraId}:`, { issues });
-      
-      // Attempt to restart if there are critical issues
-      if (issues.some(issue => issue.includes('not running') || issue.includes('not found'))) {
-        streamLogger.info(`Health check triggered restart for camera ${cameraId}`);
-        await this.restartCamera(cameraId);
-      }
-    }
-  }
+    // Setup process event handlers
+    setupProcessHandlers(process, cameraId, quality) {
+        const streamKey = `${cameraId}-${quality}`;
+        
+        process.stdout.on('data', (data) => {
+            if (config.debugMode) {
+                logger.debug(`FFmpeg stdout [${streamKey}]:`, data.toString().trim());
+            }
+        });
 
-  /**
-   * Stop streaming for a specific camera
-   */
-  async stopCamera(cameraId) {
-    streamLogger.info(`Stopping streams for camera ${cameraId}`);
-    
-    const processes = this.processes.get(cameraId);
-    if (processes) {
-      ['high', 'low'].forEach(quality => {
-        const process = processes[quality];
-        if (process && !process.killed) {
-          process.kill('SIGTERM');
-          streamLogger.info(`Stopped ${quality} stream for camera ${cameraId}`);
+        process.stderr.on('data', (data) => {
+            const message = data.toString().trim();
+            if (config.debugMode) {
+                logger.debug(`FFmpeg stderr [${streamKey}]:`, message);
+            }
+            
+            // Look for error patterns
+            if (message.includes('Connection refused') || message.includes('Network is unreachable')) {
+                logger.warn(`Network error for ${streamKey}:`, message);
+                this.updateStreamStatus(cameraId, quality, 'network_error');
+            } else if (message.includes('Invalid data found')) {
+                logger.warn(`Invalid data for ${streamKey}:`, message);
+                this.updateStreamStatus(cameraId, quality, 'data_error');
+            }
+        });
+
+        process.on('close', (code, signal) => {
+            logger.warn(`FFmpeg process ${streamKey} closed with code ${code}, signal ${signal}`);
+            this.updateStreamStatus(cameraId, quality, 'stopped');
+            
+            // Remove from active streams
+            if (this.activeStreams.has(cameraId)) {
+                delete this.activeStreams.get(cameraId)[quality];
+            }
+            
+            // Auto-restart if configured and not manually stopped
+            if (config.autoRestart && code !== 0) {
+                this.scheduleRestart(cameraId, quality);
+            }
+        });
+
+        process.on('error', (error) => {
+            logger.error(`FFmpeg process error for ${streamKey}:`, error);
+            this.updateStreamStatus(cameraId, quality, 'error');
+            
+            if (config.autoRestart) {
+                this.scheduleRestart(cameraId, quality);
+            }
+        });
+
+        // Mark as running after successful start
+        setTimeout(() => {
+            if (process.pid && !process.killed) {
+                this.updateStreamStatus(cameraId, quality, 'running');
+                this.resetRestartAttempts(cameraId, quality);
+            }
+        }, 5000);
+    }
+
+    // Stop a specific quality stream
+    async stopStream(cameraId, quality) {
+        if (this.activeStreams.has(cameraId)) {
+            const streams = this.activeStreams.get(cameraId);
+            if (streams[quality]) {
+                logger.info(`Stopping ${quality} stream for camera ${cameraId}`);
+                
+                streams[quality].kill('SIGTERM');
+                
+                // Force kill after timeout
+                setTimeout(() => {
+                    if (streams[quality] && !streams[quality].killed) {
+                        logger.warn(`Force killing ${quality} stream for camera ${cameraId}`);
+                        streams[quality].kill('SIGKILL');
+                    }
+                }, 5000);
+                
+                delete streams[quality];
+                this.updateStreamStatus(cameraId, quality, 'stopped');
+            }
         }
-      });
-      
-      this.processes.delete(cameraId);
     }
 
-    // Clear health check
-    const healthCheck = this.healthChecks.get(cameraId);
-    if (healthCheck) {
-      clearInterval(healthCheck);
-      this.healthChecks.delete(cameraId);
+    // Stop all streams for a camera
+    async stopCameraStreams(cameraId) {
+        logger.info(`Stopping all streams for camera ${cameraId}`);
+        await Promise.all([
+            this.stopStream(cameraId, 'low'),
+            this.stopStream(cameraId, 'high')
+        ]);
     }
 
-    // Reset restart attempts
-    this.restartAttempts.delete(cameraId);
-  }
+    // Stop all streams
+    async stopAllStreams() {
+        logger.info('Stopping all streams');
+        
+        const stopPromises = [];
+        for (const cameraId of config.cameraIds) {
+            stopPromises.push(this.stopCameraStreams(cameraId));
+        }
+        
+        await Promise.all(stopPromises);
+        
+        // Clear all data structures
+        this.activeStreams.clear();
+        this.streamStatus.clear();
+        this.restartAttempts.clear();
+        
+        logger.info('All streams stopped');
+    }
 
-  /**
-   * Restart a specific camera
-   */
-  async restartCamera(cameraId) {
-    await this.stopCamera(cameraId);
-    await new Promise(resolve => setTimeout(resolve, config.system.streamRestartPauseSeconds * 1000));
-    return await this.startCamera(cameraId);
-  }
+    // Restart a specific stream
+    async restartStream(cameraId, quality) {
+        logger.info(`Restarting ${quality} stream for camera ${cameraId}`);
+        await this.stopStream(cameraId, quality);
+        
+        // Wait a moment before restarting
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        await this.startStream(cameraId, quality);
+    }
 
-  /**
-   * Start all configured cameras
-   */
-  async startAllCameras() {
-    streamLogger.info('Starting all cameras');
-    
-    const results = await Promise.allSettled(
-      config.cameras.ids.map(cameraId => this.startCamera(cameraId))
-    );
+    // Schedule a restart with exponential backoff
+    scheduleRestart(cameraId, quality) {
+        const streamKey = `${cameraId}-${quality}`;
+        const attempts = this.getRestartAttempts(cameraId, quality);
+        
+        if (attempts >= 5) {
+            logger.error(`Max restart attempts reached for ${streamKey}, giving up`);
+            this.updateStreamStatus(cameraId, quality, 'failed');
+            return;
+        }
+        
+        const delay = Math.min(1000 * Math.pow(2, attempts), 60000); // Max 1 minute
+        logger.info(`Scheduling restart for ${streamKey} in ${delay}ms (attempt ${attempts + 1})`);
+        
+        setTimeout(async () => {
+            this.incrementRestartAttempts(cameraId, quality);
+            await this.restartStream(cameraId, quality);
+        }, delay);
+    }
 
-    const successful = results.filter(result => result.status === 'fulfilled' && result.value).length;
-    const total = config.cameras.ids.length;
-    
-    streamLogger.info(`Started ${successful}/${total} cameras successfully`);
-    return successful === total;
-  }
+    // Setup hourly rotation for new playlist files
+    setupHourlyRotation() {
+        // Check every minute if we need to rotate to a new hour
+        this.hourlyTimer = setInterval(() => {
+            const currentHour = moment().format('HH-mm');
+            
+            // If we're at minute 00, start new hour streams
+            if (moment().minute() === 0) {
+                logger.info(`Rotating to new hour: ${currentHour}`);
+                this.rotateAllStreams();
+            }
+        }, 60000); // Check every minute
+    }
 
-  /**
-   * Stop all cameras
-   */
-  async stopAllCameras() {
-    this.isShuttingDown = true;
-    streamLogger.info('Stopping all cameras');
-    
-    const stopPromises = Array.from(this.processes.keys()).map(cameraId => 
-      this.stopCamera(cameraId)
-    );
-    
-    await Promise.allSettled(stopPromises);
-    streamLogger.info('All cameras stopped');
-  }
+    // Rotate all streams to new hour
+    async rotateAllStreams() {
+        for (const cameraId of config.cameraIds) {
+            for (const quality of ['low', 'high']) {
+                if (this.isStreamRunning(cameraId, quality)) {
+                    // Just restart the stream - FFmpeg will automatically create new files
+                    await this.restartStream(cameraId, quality);
+                }
+            }
+        }
+    }
 
-  /**
-   * Get status of all cameras
-   */
-  getStatus() {
-    const status = {};
-    
-    config.cameras.ids.forEach(cameraId => {
-      const processes = this.processes.get(cameraId);
-      const restartAttempts = this.restartAttempts.get(cameraId) || 0;
-      
-      status[cameraId] = {
-        running: {
-          high: processes?.high && !processes.high.killed && processes.high.exitCode === null,
-          low: processes?.low && !processes.low.killed && processes.low.exitCode === null
-        },
-        restartAttempts,
-        healthCheck: this.healthChecks.has(cameraId)
-      };
-    });
-    
-    return status;
-  }
+    // Status management
+    updateStreamStatus(cameraId, quality, status) {
+        if (!this.streamStatus.has(cameraId)) {
+            this.streamStatus.set(cameraId, {});
+        }
+        this.streamStatus.get(cameraId)[quality] = {
+            status,
+            timestamp: moment().toISOString()
+        };
+        
+        logger.debug(`Stream status updated: ${cameraId}-${quality} = ${status}`);
+    }
 
-  /**
-   * Check if a specific camera is healthy
-   */
-  isCameraHealthy(cameraId) {
-    const processes = this.processes.get(cameraId);
-    if (!processes) return false;
-    
-    return ['high', 'low'].every(quality => {
-      const process = processes[quality];
-      return process && !process.killed && process.exitCode === null;
-    });
-  }
+    getStreamStatus(cameraId, quality) {
+        if (this.streamStatus.has(cameraId)) {
+            return this.streamStatus.get(cameraId)[quality] || { status: 'unknown', timestamp: null };
+        }
+        return { status: 'unknown', timestamp: null };
+    }
+
+    isStreamRunning(cameraId, quality) {
+        const status = this.getStreamStatus(cameraId, quality);
+        return status.status === 'running';
+    }
+
+    // Restart attempt management
+    getRestartAttempts(cameraId, quality) {
+        const key = `${cameraId}-${quality}`;
+        return this.restartAttempts.get(key) || 0;
+    }
+
+    incrementRestartAttempts(cameraId, quality) {
+        const key = `${cameraId}-${quality}`;
+        const current = this.getRestartAttempts(cameraId, quality);
+        this.restartAttempts.set(key, current + 1);
+    }
+
+    resetRestartAttempts(cameraId, quality) {
+        const key = `${cameraId}-${quality}`;
+        this.restartAttempts.delete(key);
+    }
+
+    // Get comprehensive status for all streams
+    getAllStreamStatus() {
+        const status = {};
+        
+        for (const cameraId of config.cameraIds) {
+            status[cameraId] = {
+                low: this.getStreamStatus(cameraId, 'low'),
+                high: this.getStreamStatus(cameraId, 'high'),
+                restartAttempts: {
+                    low: this.getRestartAttempts(cameraId, 'low'),
+                    high: this.getRestartAttempts(cameraId, 'high')
+                }
+            };
+        }
+        
+        return status;
+    }
+
+    // Check stream health
+    async checkStreamHealth() {
+        const health = {};
+        
+        for (const cameraId of config.cameraIds) {
+            health[cameraId] = {
+                low: await this.checkStreamFile(cameraId, 'low'),
+                high: await this.checkStreamFile(cameraId, 'high')
+            };
+        }
+        
+        return health;
+    }
+
+    // Check if stream file exists and is recent
+    async checkStreamFile(cameraId, quality) {
+        try {
+            const streamPath = config.getStreamPath(cameraId, quality);
+            
+            if (!await fs.pathExists(streamPath)) {
+                return { healthy: false, reason: 'file_not_found' };
+            }
+            
+            const stats = await fs.stat(streamPath);
+            const ageMs = Date.now() - stats.mtime.getTime();
+            const maxAge = 30000; // 30 seconds
+            
+            if (ageMs > maxAge) {
+                return { healthy: false, reason: 'file_stale', ageMs };
+            }
+            
+            return { healthy: true, lastModified: stats.mtime };
+            
+        } catch (error) {
+            return { healthy: false, reason: 'check_error', error: error.message };
+        }
+    }
+
+    // Cleanup on shutdown
+    async shutdown() {
+        logger.info('Shutting down stream manager');
+        
+        if (this.hourlyTimer) {
+            clearInterval(this.hourlyTimer);
+        }
+        
+        await this.stopAllStreams();
+        
+        logger.info('Stream manager shutdown complete');
+    }
 }
 
-module.exports = StreamManager; 
+module.exports = new StreamManager(); 

@@ -1,12 +1,13 @@
 {
-  "name": "cctv-streaming-api",
-  "version": "2.0.0",
-  "description": "Professional CCTV Streaming API with comprehensive configuration and mobile app support",
+  "name": "cctv-streaming-backend",
+  "version": "3.0.0",
+  "description": "Professional CCTV Streaming Backend with Flutter compatibility, real-time streaming, and historical playback",
   "main": "app.js",
   "scripts": {
-    "dev": "copy clean-simple.env .env && set NODE_ENV=development && nodemon app.js",
-    "production": "copy production.env .env && set NODE_ENV=production && node app.js",
-    "start": "node app.js"
+    "dev": "node scripts/setup-dev.js",
+    "production": "node scripts/setup-production.js",
+    "start": "node app.js",
+    "test": "node scripts/test-cameras.js"
   },
   "keywords": [
     "cctv",
@@ -17,8 +18,11 @@
     "security",
     "surveillance",
     "api",
-    "mobile",
-    "flutter"
+    "nodejs",
+    "express",
+    "flutter",
+    "real-time",
+    "playback"
   ],
   "author": "CCTV Development Team",
   "license": "MIT",
@@ -29,8 +33,11 @@
     "winston": "^3.10.0",
     "winston-daily-rotate-file": "^4.7.1",
     "dotenv": "^16.3.1",
-    "node-cron": "^3.0.2",
-    "pm2": "^5.3.0"
+    "node-schedule": "^2.1.1",
+    "moment": "^2.29.4",
+    "fs-extra": "^11.1.1",
+    "child_process": "^1.0.2",
+    "path": "^0.12.7"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
@@ -41,10 +48,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/your-username/cctv-streaming-api.git"
+    "url": "git+https://github.com/your-username/cctv-streaming-backend.git"
   },
   "bugs": {
-    "url": "https://github.com/your-username/cctv-streaming-api/issues"
+    "url": "https://github.com/your-username/cctv-streaming-backend/issues"
   },
-  "homepage": "https://github.com/your-username/cctv-streaming-api#readme"
+  "homepage": "https://github.com/your-username/cctv-streaming-backend#readme"
 }

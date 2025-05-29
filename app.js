@@ -34,9 +34,13 @@ app.use((req, res, next) => {
   next();
 });
 
+// Import routes
+const streamRoutes = require('./routes/stream');
+const systemRoutes = require('./routes/system');
+
 // Routes
-const streamRouter = require('./routes/stream');
-app.use('/streams', streamRouter);
+app.use('/streams', streamRoutes);
+app.use('/system', systemRoutes);
 
 // Serve HLS files with proper headers
 app.use('/hls', express.static(path.join(__dirname, config.hls.root), {
@@ -61,13 +65,14 @@ app.use('/hls', express.static(path.join(__dirname, config.hls.root), {
 // Serve static files (web interface)
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Health check endpoint
+// Health check endpoint (also available at root)
 app.get('/health', (req, res) => {
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    version: require('./package.json').version,
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development',
+    version: require('./package.json').version
   });
 });
 

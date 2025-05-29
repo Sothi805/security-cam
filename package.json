@@ -1,32 +1,71 @@
 {
   "name": "cctv-streaming-api",
   "version": "2.0.0",
+  "description": "Professional CCTV Streaming API with comprehensive configuration and mobile app support",
   "main": "app.js",
-  "type": "commonjs",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node app.js",
-    "dev": "nodemon app.js",
+    "dev": "NODE_ENV=development nodemon app.js",
+    "dev:watch": "NODE_ENV=development nodemon --watch . --ext js,json app.js",
+    "prod": "NODE_ENV=production node app.js",
+    "pm2:start": "pm2 start ecosystem.config.js",
+    "pm2:stop": "pm2 stop ecosystem.config.js",
+    "pm2:restart": "pm2 restart ecosystem.config.js",
+    "pm2:delete": "pm2 delete ecosystem.config.js",
+    "pm2:logs": "pm2 logs",
     "setup": "node scripts/setup.js",
-    "cleanup": "node scripts/cleanup.js"
+    "setup:dev": "scripts/setup-dev.bat",
+    "setup:prod": "sudo bash scripts/setup-production.sh",
+    "test": "node test-config.js",
+    "health": "curl -f http://localhost:3000/health || exit 1",
+    "mobile:setup": "cd app_live && flutter pub get && flutter packages pub run build_runner build --delete-conflicting-outputs",
+    "mobile:dev": "cd app_live && flutter run",
+    "mobile:build:android": "cd app_live && flutter build apk --release",
+    "mobile:build:ios": "cd app_live && flutter build ios --release",
+    "logs:tail": "tail -f logs/*.log",
+    "logs:cleanup": "find logs -name '*.log' -mtime +7 -delete",
+    "backup:config": "tar -czf backup-$(date +%Y%m%d).tar.gz .env ecosystem.config.js",
+    "clean": "rm -rf hls/* logs/* node_modules/.cache",
+    "validate": "node scripts/validate.js",
+    "install:all": "npm install && cd app_live && flutter pub get"
   },
-  "keywords": ["cctv", "streaming", "hls", "surveillance", "security"],
-  "author": "",
-  "license": "ISC",
-  "description": "Production-grade CCTV streaming API with HLS and playback support",
+  "keywords": [
+    "cctv",
+    "streaming",
+    "hls",
+    "rtsp",
+    "ffmpeg",
+    "security",
+    "surveillance",
+    "api",
+    "mobile",
+    "flutter"
+  ],
+  "author": "CCTV Development Team",
+  "license": "MIT",
   "dependencies": {
-    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "express": "^4.18.2",
     "cors": "^2.8.5",
-    "dotenv": "^16.5.0",
-    "express": "^5.1.0",
-    "fluent-ffmpeg": "^2.1.3",
-    "moment": "^2.30.1",
-    "winston": "^3.15.0",
-    "node-cron": "^3.0.3",
-    "fs-extra": "^11.2.0",
-    "compression": "^1.7.4"
+    "compression": "^1.7.4",
+    "winston": "^3.10.0",
+    "winston-daily-rotate-file": "^4.7.1",
+    "dotenv": "^16.3.1",
+    "node-cron": "^3.0.2",
+    "pm2": "^5.3.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.10"
-  }
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-username/cctv-streaming-api.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-username/cctv-streaming-api/issues"
+  },
+  "homepage": "https://github.com/your-username/cctv-streaming-api#readme"
 }

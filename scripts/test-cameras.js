@@ -1,6 +1,6 @@
 const { spawn } = require('child_process');
 const config = require('../utils/config');
-const logger = require('../utils/logger');
+const { logger } = require('../utils/logger');
 
 class CameraTest {
     constructor() {

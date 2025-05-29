@@ -3,7 +3,7 @@ const path = require('path');
 const moment = require('moment');
 const schedule = require('node-schedule');
 const config = require('./config');
-const logger = require('./logger');
+const { logger } = require('./logger');
 
 class CleanupManager {
     constructor() {

@@ -3,7 +3,7 @@ const fs = require('fs-extra');
 const path = require('path');
 const moment = require('moment');
 const config = require('./config');
-const logger = require('./logger');
+const { logger } = require('./logger');
 
 class StreamManager {
     constructor() {

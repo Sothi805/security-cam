@@ -4,7 +4,7 @@ const config = require('./config');
 
 // Create logs directory if it doesn't exist
 const fs = require('fs');
-const logsDir = path.join(__dirname, '..', 'logs');
+const logsDir = config.logsPath || path.join(__dirname, '..', 'logs');
 if (!fs.existsSync(logsDir)) {
   fs.mkdirSync(logsDir, { recursive: true });
 }
@@ -28,7 +28,7 @@ const logFormat = winston.format.combine(
 
 // Create logger instance
 const logger = winston.createLogger({
-  level: config.monitoring.logLevel,
+  level: config.logLevel || 'info',
   format: logFormat,
   transports: [
     // Console transport
@@ -42,8 +42,8 @@ const logger = winston.createLogger({
     // General log file
     new winston.transports.File({
       filename: path.join(logsDir, 'app.log'),
-      maxsize: config.logging.maxFileSize,
-      maxFiles: config.logging.maxFiles,
+      maxsize: 5242880, // 5MB
+      maxFiles: 5,
       tailable: true
     }),
     
@@ -51,16 +51,16 @@ const logger = winston.createLogger({
     new winston.transports.File({
       filename: path.join(logsDir, 'error.log'),
       level: 'error',
-      maxsize: config.logging.maxFileSize,
-      maxFiles: config.logging.maxFiles,
+      maxsize: 5242880, // 5MB
+      maxFiles: 5,
       tailable: true
     }),
     
     // Stream-specific log file
     new winston.transports.File({
       filename: path.join(logsDir, 'streams.log'),
-      maxsize: config.logging.maxFileSize,
-      maxFiles: config.logging.streamLogMaxFiles,
+      maxsize: 5242880, // 5MB
+      maxFiles: 3,
       tailable: true
     })
   ]
@@ -73,8 +73,8 @@ const streamLogger = winston.createLogger({
   transports: [
     new winston.transports.File({
       filename: path.join(logsDir, 'streams.log'),
-      maxsize: config.logging.maxFileSize,
-      maxFiles: config.logging.streamLogMaxFiles,
+      maxsize: 5242880, // 5MB
+      maxFiles: 3,
       tailable: true
     })
   ]
@@ -87,8 +87,8 @@ const systemLogger = winston.createLogger({
   transports: [
     new winston.transports.File({
       filename: path.join(logsDir, 'system.log'),
-      maxsize: config.logging.maxFileSize,
-      maxFiles: config.logging.systemLogMaxFiles,
+      maxsize: 5242880, // 5MB
+      maxFiles: 3,
       tailable: true
     })
   ]
@@ -101,8 +101,8 @@ const cleanupLogger = winston.createLogger({
   transports: [
     new winston.transports.File({
       filename: path.join(logsDir, 'cleanup.log'),
-      maxsize: config.logging.cleanupLogMaxSize,
-      maxFiles: config.logging.cleanupLogMaxFiles,
+      maxsize: 5242880, // 5MB
+      maxFiles: 3,
       tailable: true
     })
   ]

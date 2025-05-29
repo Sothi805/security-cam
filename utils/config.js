@@ -99,7 +99,9 @@ class Config {
     // RTSP URL generator
     getRtspUrl(cameraId) {
         const channelId = cameraId; // Direct mapping for now
-        return `rtsp://${this.rtspUser}:${this.rtspPassword}@${this.rtspHost}:${this.rtspPort}/Streaming/Channels/${channelId}`;
+        // URL encode the password to handle special characters like @ symbol
+        const encodedPassword = encodeURIComponent(this.rtspPassword);
+        return `rtsp://${this.rtspUser}:${encodedPassword}@${this.rtspHost}:${this.rtspPort}/Streaming/Channels/${channelId}`;
     }
 
     // Stream URL generators for API responses

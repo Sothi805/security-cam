@@ -561,6 +561,12 @@
             const statusText = isHealthy ? 'Recording' : isActive ? 'Partial' : 'Offline';
             const statusClass = isHealthy ? 'online' : isActive ? 'warning' : 'offline';
             
+            // Generate current timestamp-based stream URL
+            const now = new Date();
+            const date = now.toISOString().split('T')[0]; // YYYY-MM-DD
+            const hour = String(now.getHours()).padStart(2, '0') + '-' + String(now.getMinutes()).padStart(2, '0'); // HH-mm
+            const currentStreamUrl = `${API_BASE_URL}/hls/${camera.camera_id}/${date}/${hour}-low.m3u8`;
+            
             return `
                 <div class="camera-card">
                     <div class="camera-header">
@@ -575,7 +581,7 @@
                         ${isActive ? `
                             <video id="video-${camera.camera_id}" class="video-player" 
                                    muted autoplay playsinline controls>
-                                <source src="${API_BASE_URL}/hls/${camera.camera_id}/live/low.m3u8" type="application/x-mpegURL">
+                                <source src="${currentStreamUrl}" type="application/x-mpegURL">
                             </video>
                             <div class="video-overlay">LIVE</div>
                             <div id="loading-${camera.camera_id}" class="hls-loading" style="display: none;">
@@ -646,11 +652,15 @@
                 enableWorker: true,
                 lowLatencyMode: true,
                 backBufferLength: 10,
-              maxBufferLength: 30,
+                maxBufferLength: 30,
                 maxMaxBufferLength: 60
             });
 
-            const streamUrl = `${API_BASE_URL}/hls/${camera.camera_id}/live/low.m3u8`;
+            // Generate current timestamp-based stream URL
+            const now = new Date();
+            const date = now.toISOString().split('T')[0]; // YYYY-MM-DD
+            const hour = String(now.getHours()).padStart(2, '0') + '-' + String(now.getMinutes()).padStart(2, '0'); // HH-mm
+            const streamUrl = `${API_BASE_URL}/hls/${camera.camera_id}/${date}/${hour}-low.m3u8`;
             
             hls.loadSource(streamUrl);
             hls.attachMedia(videoElement);
@@ -663,12 +673,22 @@
 
             hls.on(Hls.Events.ERROR, (event, data) => {
                 console.error(`HLS Error for camera ${camera.camera_id}:`, data);
-              if (data.fatal) {
+                if (data.fatal) {
                     if (loadingElement) loadingElement.style.display = 'none';
-                    // Try to recover
+                    // Try to recover with new timestamp URL (in case minute changed)
                     setTimeout(() => {
-                        hls.recoverMediaError();
-                    }, 1000);
+                        const now = new Date();
+                        const date = now.toISOString().split('T')[0];
+                        const hour = String(now.getHours()).padStart(2, '0') + '-' + String(now.getMinutes()).padStart(2, '0');
+                        const newStreamUrl = `${API_BASE_URL}/hls/${camera.camera_id}/${date}/${hour}-low.m3u8`;
+                        
+                        if (newStreamUrl !== streamUrl) {
+                            console.log(`Retrying with new timestamp: ${newStreamUrl}`);
+                            hls.loadSource(newStreamUrl);
+                        } else {
+                            hls.recoverMediaError();
+                        }
+                    }, 2000);
                 }
             });
 

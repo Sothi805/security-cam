@@ -114,9 +114,13 @@ class CCTVStreamingApp {
         const streamRoutes = require('./routes/stream');
         const systemRoutes = require('./routes/system');
         
-        // API routes
+        // API routes (with /api prefix)
         this.app.use('/api/streams', streamRoutes);
         this.app.use('/api/system', systemRoutes);
+        
+        // Direct routes (without /api prefix for backward compatibility)
+        this.app.use('/streams', streamRoutes);
+        this.app.use('/system', systemRoutes);
         
         // Health check endpoint
         this.app.get('/health', (req, res) => {
@@ -129,9 +133,9 @@ class CCTVStreamingApp {
             });
         });
         
-        // Root endpoint - redirect to dashboard
+        // Root endpoint - serve dashboard
         this.app.get('/', (req, res) => {
-            res.redirect('/index.html');
+            res.sendFile(path.join(__dirname, 'public', 'index.html'));
         });
         
         // API info endpoint
@@ -145,7 +149,7 @@ class CCTVStreamingApp {
                     cameras: '/api/streams/cameras',
                     live: '/api/streams/live/:cameraId/:quality',
                     playback: '/api/streams/playback/:cameraId',
-                    system: '/api/system/status'
+                    system: '/api/system/metrics'
                 }
             });
         });

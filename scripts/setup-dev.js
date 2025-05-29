@@ -41,54 +41,12 @@ class DevelopmentSetup {
                 await fs.copy(this.devEnvPath, this.envPath);
                 console.log('✅ Development environment configured');
             } else {
-                console.log('⚠️  Development environment file not found, creating default...');
-                await this.createDefaultEnv();
+                console.log('❌ env.development file not found! Please create it with your camera credentials.');
+                throw new Error('env.development file missing - create it first!');
             }
         } catch (error) {
             throw new Error(`Failed to setup environment: ${error.message}`);
         }
-    }
-
-    async createDefaultEnv() {
-        const defaultEnv = `# CCTV Streaming Backend - Development Environment
-NODE_ENV=development
-
-# Server Configuration
-PORT=3000
-HOST=localhost
-
-# Camera Configuration (Update these with your camera details)
-CAMERA_IDS=102
-RTSP_USER=admin
-RTSP_PASSWORD=password123
-RTSP_HOST=192.168.0.105
-RTSP_PORT=554
-
-# Stream Configuration
-FPS=12
-RETENTION_DAYS_DEV=1
-RETENTION_DAYS=30
-
-# FFmpeg Configuration
-FFMPEG_PATH=ffmpeg
-
-# Stream Quality Settings
-LOW_QUALITY_WIDTH=854
-LOW_QUALITY_HEIGHT=480
-LOW_QUALITY_BITRATE=1000k
-
-# Logging
-LOG_LEVEL=debug
-LOG_FILE_PATH=./logs
-
-# Development specific settings
-AUTO_RESTART=true
-DEBUG_MODE=true
-STREAM_TIMEOUT=30000`;
-
-        await fs.writeFile(this.envPath, defaultEnv);
-        console.log('✅ Default development environment created');
-        console.log('⚠️  Please update .env file with your camera credentials');
     }
 
     async validateRequirements() {

@@ -169,6 +169,15 @@ class Config {
         
         let command = [
             this.ffmpegPath,
+            // RTSP options for better camera compatibility
+            '-rtsp_transport', 'tcp',
+            '-rtsp_flags', 'prefer_tcp',
+            '-fflags', '+genpts',
+            '-thread_queue_size', '1024',
+            '-analyzeduration', '10000000',
+            '-probesize', '10000000',
+            '-max_delay', '5000000',
+            '-timeout', '30000000',
             '-i', rtspUrl,
             '-c:v', quality === 'low' ? 'libx264' : 'copy',
             '-c:a', quality === 'low' ? 'aac' : 'copy'

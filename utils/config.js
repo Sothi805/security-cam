@@ -32,26 +32,30 @@ const config = {
   // Quality Settings
   quality: {
     low: {
-      width: parseInt(process.env.LOW_QUALITY_WIDTH) || 854,
-      height: parseInt(process.env.LOW_QUALITY_HEIGHT) || 480,
-      fps: parseInt(process.env.LOW_QUALITY_FPS) || 12,
-      bitrate: process.env.LOW_QUALITY_BITRATE || '800k',
-      preset: process.env.LOW_QUALITY_PRESET || 'veryfast',
-      profile: process.env.LOW_QUALITY_PROFILE || 'baseline',
-      level: process.env.LOW_QUALITY_LEVEL || '3.0'
+      width: 854,
+      height: 480,
+      fps: 15,
+      bitrate: '1M',
+      preset: 'fast',
+      profile: 'main',
+      level: '3.1'
+    },
+    high: {
+      // Native quality - no encoding, just copy the original stream
+      copy: true
     },
     audio: {
       codec: process.env.AUDIO_CODEC || 'aac',
-      bitrate: process.env.AUDIO_BITRATE || '64k',
-      sampleRate: parseInt(process.env.AUDIO_SAMPLE_RATE) || 22050
+      bitrate: process.env.AUDIO_BITRATE || '128k',
+      sampleRate: parseInt(process.env.AUDIO_SAMPLE_RATE) || 44100
     }
   },
 
-  // Storage and Cleanup
+  // Storage and Cleanup - Environment specific
   storage: {
-    retentionMinutes: parseInt(process.env.RETENTION_MINUTES) || 30,
+    retentionMinutes: process.env.NODE_ENV === 'development' ? 60 : 43200, // 1 hour dev, 30 days prod
     cleanupIntervalMinutes: parseInt(process.env.CLEANUP_INTERVAL_MINUTES) || 5,
-    maxStorageGB: parseInt(process.env.MAX_STORAGE_GB) || 100,
+    maxStorageGB: process.env.NODE_ENV === 'development' ? 5 : 500, // 5GB dev, 500GB prod
     initialCleanupDelaySeconds: parseInt(process.env.INITIAL_CLEANUP_DELAY_SECONDS) || 5,
     emergencyCleanupThreshold: parseInt(process.env.EMERGENCY_CLEANUP_THRESHOLD) || 95,
     warningThreshold: parseInt(process.env.WARNING_THRESHOLD) || 80,

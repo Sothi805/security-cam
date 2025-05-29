@@ -110,7 +110,7 @@ class StreamManager {
     let videoArgs = [];
     
     if (quality === 'low') {
-      // Low quality: 480p @ 12fps with encoding
+      // Low quality: 480p @ 15fps with encoding
       videoArgs = [
         '-c:v', 'libx264',
         '-preset', config.quality.low.preset,
@@ -121,7 +121,7 @@ class StreamManager {
         '-r', config.quality.low.fps.toString(),
         '-b:v', config.quality.low.bitrate,
         '-maxrate', config.quality.low.bitrate,
-        '-bufsize', `${parseInt(config.quality.low.bitrate) * 2}k`,
+        '-bufsize', `${parseInt(config.quality.low.bitrate) * 2}M`,
         '-g', (config.quality.low.fps * 2).toString(), // Keyframe every 2 seconds
         '-keyint_min', config.quality.low.fps.toString(),
         '-c:a', config.quality.audio.codec,
@@ -129,7 +129,7 @@ class StreamManager {
         '-ar', config.quality.audio.sampleRate.toString()
       ];
     } else {
-      // High quality: copy stream without encoding
+      // High quality: copy original stream without encoding
       videoArgs = [
         '-c', 'copy'
       ];
@@ -141,8 +141,6 @@ class StreamManager {
       '-hls_list_size', config.hls.listSize.toString(),
       '-hls_flags', config.hls.flags,
       '-hls_segment_filename', outputPaths.segmentPattern,
-      '-hls_start_number_source', 'datetime',
-      '-strftime', '1',
       outputPaths.playlist
     ];
 

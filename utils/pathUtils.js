@@ -28,12 +28,12 @@ class PathUtils {
    */
   static getLiveStreamPath(cameraId, quality = 'high') {
     const baseDir = config.hls.root;
-    const liveDir = path.join(baseDir, cameraId, 'live', quality);
+    const liveDir = path.join(baseDir, cameraId, 'live');
     
     return {
       liveDir,
-      playlist: path.join(liveDir, 'index.m3u8'),
-      segmentPattern: path.join(liveDir, 'segment_%d.ts')
+      playlist: path.join(liveDir, `${quality}.m3u8`),
+      segmentPattern: path.join(liveDir, `${quality}_%d.ts`)
     };
   }
 

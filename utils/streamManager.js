@@ -101,8 +101,8 @@ class StreamManager {
         process.stdout.on('data', (data) => {
             const message = data.toString().trim();
             
-            // Only log if message is not empty
-            if (message) {
+            // Only log if message has actual content (not empty string)
+            if (message.length > 0) {
                 logger.info(`FFmpeg stdout [${streamKey}]:`, message);
             }
         });
@@ -110,8 +110,8 @@ class StreamManager {
         process.stderr.on('data', (data) => {
             const message = data.toString().trim();
             
-            // Only log if message is not empty
-            if (message) {
+            // Only log if message has actual content (not empty string)
+            if (message.length > 0) {
                 // Enhanced logging with different levels based on content
                 if (message.includes('Error') || message.includes('Failed') || message.includes('Connection refused')) {
                     logger.error(`🔴 FFmpeg ERROR [${streamKey}]:`, message);
@@ -122,21 +122,21 @@ class StreamManager {
                 } else {
                     logger.debug(`⚪ FFmpeg DEBUG [${streamKey}]:`, message);
                 }
-            }
-            
-            // Look for specific error patterns with detailed logging
-            if (message.includes('Connection refused') || message.includes('Network is unreachable')) {
-                logger.error(`🚨 NETWORK ERROR for ${streamKey}: Cannot reach camera at ${config.getRtspUrl(cameraId).replace(/:.*@/, ':***@')}`);
-                this.updateStreamStatus(cameraId, quality, 'network_error');
-            } else if (message.includes('Invalid data found') || message.includes('No such file or directory')) {
-                logger.error(`🚨 STREAM ERROR for ${streamKey}: Invalid RTSP stream or wrong URL format`);
-                this.updateStreamStatus(cameraId, quality, 'data_error');
-            } else if (message.includes('401 Unauthorized') || message.includes('Authentication failed')) {
-                logger.error(`🚨 AUTH ERROR for ${streamKey}: Wrong username/password for camera`);
-                this.updateStreamStatus(cameraId, quality, 'auth_error');
-            } else if (message.includes('404 Not Found') || message.includes('Stream not found')) {
-                logger.error(`🚨 STREAM NOT FOUND for ${streamKey}: Camera channel ${cameraId} does not exist`);
-                this.updateStreamStatus(cameraId, quality, 'not_found');
+                
+                // Look for specific error patterns with detailed logging
+                if (message.includes('Connection refused') || message.includes('Network is unreachable')) {
+                    logger.error(`🚨 NETWORK ERROR for ${streamKey}: Cannot reach camera at ${config.getRtspUrl(cameraId).replace(/:.*@/, ':***@')}`);
+                    this.updateStreamStatus(cameraId, quality, 'network_error');
+                } else if (message.includes('Invalid data found') || message.includes('No such file or directory')) {
+                    logger.error(`🚨 STREAM ERROR for ${streamKey}: Invalid RTSP stream or wrong URL format`);
+                    this.updateStreamStatus(cameraId, quality, 'data_error');
+                } else if (message.includes('401 Unauthorized') || message.includes('Authentication failed')) {
+                    logger.error(`🚨 AUTH ERROR for ${streamKey}: Wrong username/password for camera`);
+                    this.updateStreamStatus(cameraId, quality, 'auth_error');
+                } else if (message.includes('404 Not Found') || message.includes('Stream not found')) {
+                    logger.error(`🚨 STREAM NOT FOUND for ${streamKey}: Camera channel ${cameraId} does not exist`);
+                    this.updateStreamStatus(cameraId, quality, 'not_found');
+                }
             }
         });
 

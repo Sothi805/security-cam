@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs-extra');
 const moment = require('moment');
 const config = require('./config');
+const { logger } = require('./logger');
 
 class PathUtils {
     constructor() {
@@ -338,47 +339,84 @@ class PathUtils {
     // Get stream health information
     async getStreamHealth(cameraId, quality) {
         try {
-            const streamPath = this.getLiveStreamPath(cameraId, quality);
+            const streamPath = config.getStreamPath(cameraId, quality);
+            const streamDir = path.dirname(streamPath);
             
+            // Check if stream directory exists
+            if (!await fs.pathExists(streamDir)) {
+                return {
+                    healthy: false,
+                    error: 'Stream directory not found',
+                    lastCheck: moment().toISOString()
+                };
+            }
+            
+            // Check if m3u8 playlist exists
             if (!await fs.pathExists(streamPath)) {
                 return {
                     healthy: false,
-                    reason: 'file_not_found',
-                    path: streamPath
+                    error: 'Stream playlist not found',
+                    lastCheck: moment().toISOString()
                 };
             }
             
-            const stats = await fs.stat(streamPath);
-            const ageMs = Date.now() - stats.mtime.getTime();
-            const maxAge = 60000; // 1 minute
-            
-            if (ageMs > maxAge) {
+            // Read and parse m3u8 playlist
+            const playlist = await fs.readFile(streamPath, 'utf8');
+            const segments = playlist
+                .split('\n')
+                .filter(line => line.endsWith('.ts'))
+                .map(line => path.join(streamDir, line));
+                
+            if (segments.length === 0) {
                 return {
                     healthy: false,
-                    reason: 'file_stale',
-                    ageMs,
-                    lastModified: stats.mtime.toISOString(),
-                    path: streamPath
+                    error: 'No segments found in playlist',
+                    lastCheck: moment().toISOString()
                 };
             }
             
-            // Check if playlist has content
-            const content = await fs.readFile(streamPath, 'utf8');
-            const hasSegments = content.includes('.ts');
+            // Check if segments exist and are readable
+            const segmentChecks = await Promise.all(
+                segments.map(async segment => {
+                    try {
+                        const stats = await fs.stat(segment);
+                        const age = moment().diff(moment(stats.mtime), 'seconds');
+                        return {
+                            exists: true,
+                            size: stats.size,
+                            age,
+                            valid: stats.size > 0 && age < 30 // Segment should be non-empty and less than 30 seconds old
+                        };
+                    } catch (error) {
+                        return { exists: false, error: error.message };
+                    }
+                })
+            );
+            
+            const validSegments = segmentChecks.filter(check => check.exists && check.valid);
+            const totalSegments = segments.length;
+            const healthRatio = validSegments.length / totalSegments;
             
             return {
-                healthy: hasSegments,
-                reason: hasSegments ? 'ok' : 'no_segments',
-                lastModified: stats.mtime.toISOString(),
-                fileSize: stats.size,
-                path: streamPath
+                healthy: healthRatio >= 0.7, // At least 70% of segments should be valid
+                segmentCount: totalSegments,
+                validSegments: validSegments.length,
+                healthRatio: Math.round(healthRatio * 100) / 100,
+                details: {
+                    playlist: {
+                        exists: true,
+                        path: streamPath
+                    },
+                    segments: segmentChecks
+                },
+                lastCheck: moment().toISOString()
             };
-            
         } catch (error) {
+            logger.error(`Failed to check stream health for camera ${cameraId} (${quality}):`, error);
             return {
                 healthy: false,
-                reason: 'check_error',
-                error: error.message
+                error: error.message,
+                lastCheck: moment().toISOString()
             };
         }
     }

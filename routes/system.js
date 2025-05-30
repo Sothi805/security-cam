@@ -4,23 +4,42 @@ const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { promisify } = require('util');
+const healthMonitor = require('../utils/healthMonitor');
+const { getSystemMetrics, getStorageInfo, formatBytes } = require('../utils/systemUtils');
+const config = require('../utils/config');
+const { logger } = require('../utils/logger');
 
 const execAsync = promisify(exec);
 
 // System metrics endpoint
 router.get('/metrics', async (req, res) => {
     try {
-        const metrics = await collectSystemMetrics();
-        res.json(metrics);
-    } catch (error) {
-        console.error('Failed to collect system metrics:', error);
-        res.status(500).json({ 
-            error: 'Failed to collect system metrics',
-            cpu: { usage: 0 },
-            memory: { usage: 0 },
-            disk: { usage: 0 },
-            processes: { ffmpeg: 0 }
+        const [metrics, storage] = await Promise.all([
+            getSystemMetrics(),
+            getStorageInfo()
+        ]);
+
+        res.json({
+            timestamp: Date.now(),
+            system: {
+                ...metrics,
+                memory: {
+                    ...metrics.memory,
+                    totalFormatted: formatBytes(metrics.memory.total),
+                    usedFormatted: formatBytes(metrics.memory.used),
+                    freeFormatted: formatBytes(metrics.memory.free)
+                }
+            },
+            storage: storage ? {
+                ...storage,
+                totalFormatted: formatBytes(storage.total),
+                usedFormatted: formatBytes(storage.used),
+                freeFormatted: formatBytes(storage.free)
+            } : null
         });
+    } catch (error) {
+        logger.error('Failed to get system metrics:', error);
+        res.status(500).json({ error: 'Failed to get system metrics' });
     }
 });
 
@@ -124,18 +143,14 @@ async function collectSystemMetrics() {
 }
 
 // Health check endpoint
-router.get('/health', (req, res) => {
-    const healthData = {
-        status: 'healthy',
-        timestamp: new Date().toISOString(),
-        uptime: process.uptime(),
-        environment: process.env.NODE_ENV || 'development',
-        memory: process.memoryUsage(),
-        pid: process.pid,
-        version: process.version
-    };
-
-    res.json(healthData);
+router.get('/health', async (req, res) => {
+    try {
+        const status = healthMonitor.getStatus();
+        res.json(status);
+    } catch (error) {
+        logger.error('Failed to get health status:', error);
+        res.status(500).json({ error: 'Failed to get health status' });
+    }
 });
 
 // Process information endpoint
@@ -175,6 +190,49 @@ router.get('/processes', async (req, res) => {
     } catch (error) {
         console.error('Failed to get process information:', error);
         res.status(500).json({ error: 'Failed to get process information' });
+    }
+});
+
+// Get metrics history
+router.get('/metrics/history', (req, res) => {
+    try {
+        const history = healthMonitor.getMetricsHistory();
+        res.json(history);
+    } catch (error) {
+        logger.error('Failed to get metrics history:', error);
+        res.status(500).json({ error: 'Failed to get metrics history' });
+    }
+});
+
+// Get active alerts
+router.get('/alerts', (req, res) => {
+    try {
+        const alerts = healthMonitor.alerts;
+        res.json(alerts);
+    } catch (error) {
+        logger.error('Failed to get alerts:', error);
+        res.status(500).json({ error: 'Failed to get alerts' });
+    }
+});
+
+// Clear all alerts
+router.delete('/alerts', (req, res) => {
+    try {
+        healthMonitor.clearAlerts();
+        res.json({ success: true });
+    } catch (error) {
+        logger.error('Failed to clear alerts:', error);
+        res.status(500).json({ error: 'Failed to clear alerts' });
+    }
+});
+
+// Get system configuration
+router.get('/config', (req, res) => {
+    try {
+        res.json(config.getSummary());
+    } catch (error) {
+        logger.error('Failed to get system config:', error);
+        res.status(500).json({ error: 'Failed to get system config' });
     }
 });
 

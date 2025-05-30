@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stream Test</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js.map"></script>
+    <link rel="stylesheet" href="/css/styles.css" />
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+      }
+      #videoPlayer {
+        width: 100%;
+        max-width: 800px;
+        margin: 20px auto;
+        background: #000;
+      }
+      #status {
+        margin: 20px auto;
+        max-width: 800px;
+        padding: 10px;
+        background: #f0f0f0;
+        border-radius: 4px;
+      }
+      #debug {
+        margin: 20px auto;
+        max-width: 800px;
+        padding: 10px;
+        background: #f8f8f8;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        white-space: pre-wrap;
+        font-family: monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <video id="videoPlayer" controls></video>
+    <div id="status">Initializing...</div>
+    <div id="debug"></div>
+
+    <script>
+      const video = document.getElementById("videoPlayer");
+      const status = document.getElementById("status");
+      const debug = document.getElementById("debug");
+
+      function log(...args) {
+        console.log("[Stream Test]", ...args);
+        debug.textContent +=
+          "\n" + new Date().toISOString() + ": " + args.join(" ");
+      }
+
+      if (Hls.isSupported()) {
+        const hls = new Hls({
+          debug: true,
+          enableWorker: true,
+          lowLatencyMode: true,
+          backBufferLength: 30,
+          manifestLoadingTimeOut: 20000,
+          manifestLoadingMaxRetry: 3,
+          manifestLoadingRetryDelay: 500
+        });
+
+        // Use the live/low.m3u8 file
+        const streamUrl = "/hls/102/live/low.m3u8";
+        log("Loading stream:", streamUrl);
+
+        hls.loadSource(streamUrl);
+        hls.attachMedia(video);
+
+        hls.on(Hls.Events.MANIFEST_LOADING, () => {
+          log("Manifest loading...");
+          status.textContent = "Loading stream manifest...";
+        });
+
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          log("Manifest parsed successfully");
+          status.textContent = "Stream loaded successfully";
+          video.play().catch((e) => {
+            log("Auto-play prevented:", e);
+            status.textContent = "Click play to start the stream";
+          });
+        });
+
+        hls.on(Hls.Events.ERROR, (event, data) => {
+          log("Error:", data.type, data.details);
+          status.textContent = "Error: " + data.details;
+
+          if (data.fatal) {
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                log("Network error, attempting to recover");
+                status.textContent = "Network error, retrying...";
+                setTimeout(() => {
+                  hls.loadSource(streamUrl);
+                  hls.startLoad();
+                }, 2000);
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                log("Media error, attempting to recover");
+                status.textContent = "Media error, recovering...";
+                hls.recoverMediaError();
+                break;
+              default:
+                log("Fatal error:", data.details);
+                status.textContent = "Fatal error: " + data.details;
+                hls.destroy();
+                break;
+            }
+          }
+        });
+      } else {
+        status.textContent = "HLS is not supported in your browser";
+      }
+    </script>
+  </body>
+</html>

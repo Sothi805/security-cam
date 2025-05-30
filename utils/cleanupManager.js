@@ -178,8 +178,8 @@ class CleanupManager {
                             const fileTime = dirDate.clone().add(fileHour.hour, 'hours').add(fileHour.minute, 'minutes');
                             const ageHours = now.diff(fileTime, 'hours');
                             
-                            // Keep files from last 2 hours to ensure current streams are not affected
-                            if (ageHours < 2) {
+                            // Keep files from last 6 hours to ensure current streams are not affected
+                            if (ageHours < 6) {
                                 continue;
                             }
                         }

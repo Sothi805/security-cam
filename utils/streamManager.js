@@ -11,7 +11,10 @@ class StreamManager {
         this.streamStatus = new Map(); // cameraId -> { low: status, high: status }
         this.restartAttempts = new Map(); // cameraId-quality -> attempts
         this.hourlyTimer = null;
+        this.retentionDays = process.env.NODE_ENV === 'production' ? 30 : 1; // 30 days in prod, 1 day in dev
         this.setupHourlyRotation();
+        this.setupRetentionCleanup();
+        this.setupSegmentMover();
     }
 
     // Initialize streams for all cameras
@@ -21,6 +24,7 @@ class StreamManager {
         logger.info(`🌐 RTSP Host: ${config.rtspHost}:${config.rtspPort}`);
         logger.info(`👤 RTSP User: ${config.rtspUser}`);
         logger.info(`🔧 FFmpeg Path: ${config.ffmpegPath}`);
+        logger.info(`📅 Retention period: ${this.retentionDays} days`);
         
         for (const cameraId of config.cameraIds) {
             logger.info(`🎬 Starting streams for camera ${cameraId}...`);
@@ -34,9 +38,8 @@ class StreamManager {
     async startCameraStreams(cameraId) {
         logger.info(`Starting streams for camera ${cameraId}`);
         
-        // Ensure camera directory exists
-        const cameraDir = config.getCameraDirectory(cameraId);
-        await fs.ensureDir(cameraDir);
+        // Ensure camera directories exist
+        await this.ensureCameraDirectories(cameraId);
         
         // Start both quality streams
         await this.startStream(cameraId, 'low');
@@ -44,6 +47,23 @@ class StreamManager {
         
         this.updateStreamStatus(cameraId, 'low', 'starting');
         this.updateStreamStatus(cameraId, 'high', 'starting');
+    }
+
+    // Ensure all required directories exist
+    async ensureCameraDirectories(cameraId) {
+        // Base camera directory
+        const cameraDir = path.join(config.paths.hls, cameraId.toString());
+        await fs.ensureDir(cameraDir);
+
+        // Live directory
+        const liveDir = path.join(cameraDir, 'live');
+        await fs.ensureDir(liveDir);
+        
+        // Recordings directory with date and hour structure
+        const date = moment().format('YYYY-MM-DD');
+        const hour = moment().format('HH');
+        const recordingsDir = path.join(cameraDir, 'recordings', date, hour);
+        await fs.ensureDir(recordingsDir);
     }
 
     // Start a specific quality stream
@@ -54,48 +74,164 @@ class StreamManager {
             // Stop existing stream if running
             await this.stopStream(cameraId, quality);
             
-            // Get FFmpeg command
-            const command = config.getFFmpegCommand(cameraId, quality);
-            const [ffmpegPath, ...args] = command;
+            // Ensure directories exist
+            await this.ensureCameraDirectories(cameraId);
             
-            // Log the RTSP URL being used (with hidden password)
-            const rtspUrl = config.getRtspUrl(cameraId);
-            const safeUrl = rtspUrl.replace(/:.*@/, ':***@');
-            logger.info(`🎥 Starting ${quality} stream for camera ${cameraId} from: ${safeUrl}`);
-            logger.debug(`🔧 FFmpeg command: ${command.join(' ')}`);
+            // Get FFmpeg commands for both live and recording
+            const liveCommand = this.getLiveStreamCommand(cameraId, quality);
+            const recordCommand = this.getRecordingCommand(cameraId, quality);
             
-            // Spawn FFmpeg process
-            const ffmpegProcess = spawn(ffmpegPath, args, {
+            // Start both processes
+            const [livePath, ...liveArgs] = liveCommand;
+            const [recordPath, ...recordArgs] = recordCommand;
+            
+            // Spawn FFmpeg processes
+            const liveProcess = spawn(livePath, liveArgs, {
+                stdio: ['ignore', 'pipe', 'pipe'],
+                detached: false
+            });
+            
+            const recordProcess = spawn(recordPath, recordArgs, {
                 stdio: ['ignore', 'pipe', 'pipe'],
                 detached: false
             });
 
-            // Store process reference
+            // Store process references
             if (!this.activeStreams.has(cameraId)) {
                 this.activeStreams.set(cameraId, {});
             }
-            this.activeStreams.get(cameraId)[quality] = ffmpegProcess;
+            this.activeStreams.get(cameraId)[quality] = {
+                live: liveProcess,
+                record: recordProcess
+            };
 
-            // Setup process event handlers
-            this.setupProcessHandlers(ffmpegProcess, cameraId, quality);
+            // Setup process handlers
+            this.setupProcessHandlers(liveProcess, cameraId, quality, 'live');
+            this.setupProcessHandlers(recordProcess, cameraId, quality, 'record');
             
-            logger.info(`✅ Started ${quality} stream for camera ${cameraId} (PID: ${ffmpegProcess.pid})`);
+            logger.info(`✅ Started ${quality} streams for camera ${cameraId}`);
             
         } catch (error) {
             logger.error(`❌ Failed to start ${quality} stream for camera ${cameraId}:`, error.message);
-            logger.error(`🔍 Error details:`, error);
             this.updateStreamStatus(cameraId, quality, 'error');
             
-            // Attempt restart if configured
             if (config.autoRestart) {
-                logger.info(`🔄 Auto-restart enabled, scheduling restart for ${streamKey}`);
                 this.scheduleRestart(cameraId, quality);
             }
         }
     }
 
+    // Get FFmpeg command for live streaming
+    getLiveStreamCommand(cameraId, quality) {
+        const liveDir = path.join(config.paths.hls, cameraId.toString(), 'live');
+        
+        const baseArgs = [
+            '-rtsp_transport', 'tcp',
+            '-user_agent', 'LibVLC/3.0.0',
+            '-i', this.getRtspUrl(cameraId),
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',
+            '-tune', 'zerolatency',
+            '-profile:v', 'baseline',
+            '-level', '3.0',
+            '-g', '30',
+            '-keyint_min', '30',  // Force keyframe every 30 frames
+            '-sc_threshold', '0',
+            '-bufsize', '2M',     // Increase buffer size
+            '-maxrate', '2M',     // Set max bitrate
+            '-f', 'hls',
+            '-hls_time', '2',     // 2-second segments
+            '-hls_list_size', '30', // Keep 1 minute of segments (30 * 2 seconds)
+            '-hls_flags', 'delete_segments+append_list+discont_start+split_by_time',
+            '-hls_segment_type', 'mpegts',
+            '-hls_allow_cache', '0',
+            '-hls_segment_filename', path.join(liveDir, 'segment%d.ts'),
+            path.join(liveDir, 'live.m3u8')
+        ];
+
+        // Add quality-specific settings
+        if (quality === 'low') {
+            baseArgs.splice(8, 0, '-vf', 'scale=640:360', '-b:v', '800k');
+        } else {
+            baseArgs.splice(8, 0, '-vf', 'scale=1280:720', '-b:v', '2000k');
+        }
+
+        return [config.ffmpegPath, ...baseArgs];
+    }
+
+    // Get FFmpeg command for recording
+    getRecordingCommand(cameraId, quality) {
+        const date = moment().format('YYYY-MM-DD');
+        const hour = moment().format('HH');
+        const recordingsDir = path.join(config.paths.hls, cameraId.toString(), 'recordings', date, hour);
+        
+        const baseArgs = [
+            '-rtsp_transport', 'tcp',
+            '-user_agent', 'LibVLC/3.0.0',
+            '-i', this.getRtspUrl(cameraId),
+            '-c:v', 'libx264',
+            '-preset', 'medium',
+            '-profile:v', 'main',
+            '-level', '4.0',
+            '-g', '60',
+            '-keyint_min', '60',
+            '-sc_threshold', '0',
+            '-bufsize', '4M',
+            '-maxrate', '4M',
+            '-f', 'hls',
+            '-hls_time', '60',    // 1-minute segments
+            '-hls_list_size', '0', // Keep all segments
+            '-hls_flags', 'append_list+discont_start+split_by_time',
+            '-hls_segment_type', 'mpegts',
+            '-strftime', '1',     // Enable strftime in segment names
+            '-hls_segment_filename', path.join(recordingsDir, '%M.ts'),
+            path.join(recordingsDir, 'playlist.m3u8')
+        ];
+
+        // Add quality-specific settings
+        if (quality === 'low') {
+            baseArgs.splice(8, 0, '-vf', 'scale=640:360', '-b:v', '1000k');
+        } else {
+            baseArgs.splice(8, 0, '-vf', 'scale=1280:720', '-b:v', '2500k');
+        }
+
+        return [config.ffmpegPath, ...baseArgs];
+    }
+
+    // Setup retention cleanup
+    setupRetentionCleanup() {
+        // Run cleanup daily at midnight
+        setInterval(async () => {
+            if (moment().hour() === 0 && moment().minute() === 0) {
+                await this.cleanupOldRecordings();
+            }
+        }, 60000); // Check every minute
+    }
+
+    // Cleanup old recordings
+    async cleanupOldRecordings() {
+        try {
+            const cutoffDate = moment().subtract(this.retentionDays, 'days').format('YYYY-MM-DD');
+            
+            for (const cameraId of config.cameraIds) {
+                const cameraDir = path.join(config.paths.hls, cameraId.toString());
+                const dates = await fs.readdir(cameraDir);
+                
+                for (const date of dates) {
+                    if (date !== 'live' && date < cutoffDate) {
+                        const dateDir = path.join(cameraDir, date);
+                        await fs.remove(dateDir);
+                        logger.info(`🧹 Cleaned up old recordings for camera ${cameraId} from ${date}`);
+                    }
+                }
+            }
+        } catch (error) {
+            logger.error('Failed to cleanup old recordings:', error);
+        }
+    }
+
     // Setup process event handlers
-    setupProcessHandlers(process, cameraId, quality) {
+    setupProcessHandlers(process, cameraId, quality, type) {
         const streamKey = `${cameraId}-${quality}`;
         
         process.stdout.on('data', (data) => {
@@ -127,7 +263,7 @@ class StreamManager {
                 
                 // Look for specific error patterns with detailed logging
                 if (message.includes('Connection refused') || message.includes('Network is unreachable')) {
-                    logger.error(`🚨 NETWORK ERROR for ${streamKey}: Cannot reach camera at ${config.getRtspUrl(cameraId).replace(/:.*@/, ':***@')}`);
+                    logger.error(`🚨 NETWORK ERROR for ${streamKey}: Cannot reach camera at ${this.getRtspUrl(cameraId).replace(/:.*@/, ':***@')}`);
                     this.updateStreamStatus(cameraId, quality, 'network_error');
                 } else if (message.includes('Invalid data found') || message.includes('No such file or directory')) {
                     logger.error(`🚨 STREAM ERROR for ${streamKey}: Invalid RTSP stream or wrong URL format`);
@@ -200,13 +336,18 @@ class StreamManager {
             if (streams[quality]) {
                 logger.info(`Stopping ${quality} stream for camera ${cameraId}`);
                 
-                streams[quality].kill('SIGTERM');
+                streams[quality].live.kill('SIGTERM');
+                streams[quality].record.kill('SIGTERM');
                 
                 // Force kill after timeout
                 setTimeout(() => {
-                    if (streams[quality] && !streams[quality].killed) {
-                        logger.warn(`Force killing ${quality} stream for camera ${cameraId}`);
-                        streams[quality].kill('SIGKILL');
+                    if (streams[quality].live && !streams[quality].live.killed) {
+                        logger.warn(`Force killing live stream for camera ${cameraId}`);
+                        streams[quality].live.kill('SIGKILL');
+                    }
+                    if (streams[quality].record && !streams[quality].record.killed) {
+                        logger.warn(`Force killing recording stream for camera ${cameraId}`);
+                        streams[quality].record.kill('SIGKILL');
                     }
                 }, 10000); // Increased from 5 seconds to 10 seconds
                 
@@ -410,6 +551,79 @@ class StreamManager {
         await this.stopAllStreams();
         
         logger.info('Stream manager shutdown complete');
+    }
+
+    getStreamDirectory(cameraId) {
+        const date = moment().format('YYYY-MM-DD');
+        const baseDir = path.join(config.paths.hls, cameraId.toString(), date);
+        fs.mkdirSync(baseDir, { recursive: true });
+        return baseDir;
+    }
+
+    getStreamPath(cameraId, quality) {
+        const dir = this.getStreamDirectory(cameraId);
+        const hour = moment().format('HH-mm');
+        return {
+            playlist: path.join(dir, `${hour}-${quality}.m3u8`),
+            segment: path.join(dir, `${hour}-${quality}_%03d.ts`)
+        };
+    }
+
+    getRtspUrl(cameraId) {
+        return `rtsp://${config.rtspUser}:${config.rtspPassword}@${config.rtspHost}:${config.rtspPort}/Streaming/Channels/${cameraId}`;
+    }
+
+    // Setup segment mover
+    setupSegmentMover() {
+        setInterval(async () => {
+            for (const cameraId of config.cameraIds) {
+                await this.moveOldSegments(cameraId);
+            }
+        }, 30000); // Check every 30 seconds
+    }
+
+    // Move old segments from live to recordings
+    async moveOldSegments(cameraId) {
+        try {
+            const liveDir = path.join(config.paths.hls, cameraId.toString(), 'live');
+            const files = await fs.readdir(liveDir);
+            const now = moment();
+
+            for (const file of files) {
+                if (!file.endsWith('.ts')) continue;
+
+                const filePath = path.join(liveDir, file);
+                const stats = await fs.stat(filePath);
+                const fileAge = moment().diff(moment(stats.mtime), 'seconds');
+
+                // Move segments older than 60 seconds
+                if (fileAge > 60) {
+                    const date = moment(stats.mtime).format('YYYY-MM-DD');
+                    const hour = moment(stats.mtime).format('HH');
+                    const minute = moment(stats.mtime).format('mm');
+                    
+                    const recordingsDir = path.join(
+                        config.paths.hls,
+                        cameraId.toString(),
+                        'recordings',
+                        date,
+                        hour
+                    );
+
+                    await fs.ensureDir(recordingsDir);
+                    const targetPath = path.join(recordingsDir, `${minute}.ts`);
+
+                    try {
+                        await fs.move(filePath, targetPath, { overwrite: true });
+                        logger.debug(`Moved old segment: ${file} to ${targetPath}`);
+                    } catch (moveError) {
+                        logger.error(`Failed to move segment ${file}:`, moveError);
+                    }
+                }
+            }
+        } catch (error) {
+            logger.error(`Error moving old segments for camera ${cameraId}:`, error);
+        }
     }
 }
 

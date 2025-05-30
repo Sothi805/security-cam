@@ -1,6 +1,7 @@
 const path = require('path');
 const fs = require('fs-extra');
 const moment = require('moment');
+const logger = require('../utils/logger');
 
 class Config {
     constructor() {
@@ -49,6 +50,29 @@ class Config {
         this.autoRestart = process.env.AUTO_RESTART === 'true';
         this.debugMode = process.env.DEBUG_MODE === 'true';
         this.streamTimeout = parseInt(process.env.STREAM_TIMEOUT) || 30000;
+
+        // Retention settings
+        this.minMotionRetentionDays = parseInt(process.env.MIN_MOTION_RETENTION_DAYS) || 7;
+        this.maxStoragePerCamera = parseInt(process.env.MAX_STORAGE_PER_CAMERA) || 50;
+        this.keepMotionEvents = process.env.KEEP_MOTION_EVENTS === 'true';
+        this.quotaAction = process.env.QUOTA_ACTION || 'delete-oldest';
+        this.storageCheckInterval = parseInt(process.env.STORAGE_CHECK_INTERVAL) || 15;
+
+        this.paths = {
+            hls: path.join(__dirname, '..', 'hls'),
+            logs: path.join(__dirname, '..', 'logs'),
+            public: path.join(__dirname, '..', 'public')
+        };
+
+        this.hlsOptions = {
+            time: 2,
+            listSize: 900,
+            flags: 'delete_segments+append_list+discont_start+split_by_time',
+            segmentType: 'mpegts',
+            initTime: 2,
+            allowCache: 0,
+            baseDir: 'live'
+        };
     }
 
     validateConfig() {
@@ -73,23 +97,34 @@ class Config {
         this.publicPath = path.join(this.basePath, 'public');
         this.logsPath = path.resolve(this.logFilePath);
         
-        // Ensure directories exist
+        // Ensure base directories exist
         fs.ensureDirSync(this.hlsPath);
+        console.log(`📁 Created HLS directory: ${this.hlsPath}`);
+        
         fs.ensureDirSync(this.publicPath);
+        console.log(`📁 Created public directory: ${this.publicPath}`);
+        
         fs.ensureDirSync(this.logsPath);
+        console.log(`📁 Created logs directory: ${this.logsPath}`);
     }
 
     // Path generators for new folder structure: hls/{CAMERA_ID}/{YYYY-MM-DD}/{HH-mm}.m3u8
-    getStreamPath(cameraId, quality = 'low', date = null, hour = null) {
-        if (!date) date = moment().format('YYYY-MM-DD');
-        if (!hour) hour = moment().format('HH-mm');
-        
-        return path.join(this.hlsPath, cameraId.toString(), date, `${hour}-${quality}.m3u8`);
+    getStreamPath(cameraId, quality) {
+        const date = moment().format('YYYY-MM-DD');
+        const hour = moment().format('HH-mm');
+        return path.join(
+            this.hlsPath,
+            cameraId.toString(),
+            date,
+            `${hour}-${quality}.m3u8`
+        );
     }
 
     getStreamDirectory(cameraId, date = null) {
         if (!date) date = moment().format('YYYY-MM-DD');
-        return path.join(this.hlsPath, cameraId.toString(), date);
+        const dir = path.join(this.hlsPath, cameraId.toString(), date);
+        fs.ensureDirSync(dir);
+        return dir;
     }
 
     getCameraDirectory(cameraId) {
@@ -98,10 +133,9 @@ class Config {
 
     // RTSP URL generator
     getRtspUrl(cameraId) {
-        const channelId = cameraId; // Direct mapping for now
         // URL encode the password to handle special characters like @ symbol
         const encodedPassword = encodeURIComponent(this.rtspPassword);
-        return `rtsp://${this.rtspUser}:${encodedPassword}@${this.rtspHost}:${this.rtspPort}/Streaming/Channels/${channelId}`;
+        return `rtsp://${this.rtspUser}:${encodedPassword}@${this.rtspHost}:${this.rtspPort}/Streaming/Channels/${cameraId}`;
     }
 
     // Stream URL generators for API responses
@@ -159,61 +193,66 @@ class Config {
 
     // FFmpeg command generators
     getFFmpegCommand(cameraId, quality) {
-        const rtspUrl = this.getRtspUrl(cameraId);
         const date = moment().format('YYYY-MM-DD');
         const hour = moment().format('HH-mm');
-        const outputPath = this.getStreamPath(cameraId, quality, date, hour);
+        const outputDir = path.join(this.hlsPath, cameraId.toString(), date);
+        fs.ensureDirSync(outputDir);
         
-        // Ensure output directory exists
-        fs.ensureDirSync(path.dirname(outputPath));
-        
-        let command = [
-            this.ffmpegPath,
-            // Simplified RTSP options that work with ffplay
+        // Base arguments for all streams
+        const baseArgs = [
             '-rtsp_transport', 'tcp',
-            '-user_agent', 'LibVLC/3.0.0',  // Critical for Hikvision compatibility
-            '-i', rtspUrl,
-            '-c:v', quality === 'low' ? 'libx264' : 'copy',
-            '-c:a', quality === 'low' ? 'aac' : 'copy'
+            '-user_agent', 'LibVLC/3.0.0',
+            '-i', this.getRtspUrl(cameraId),
+            '-c:v', 'libx264',  // Transcode to H.264 for better compatibility
+            '-preset', 'ultrafast',
+            '-tune', 'zerolatency',
+            '-profile:v', 'baseline',
+            '-level', '3.0',
+            '-g', '30',  // Keyframe interval
+            '-sc_threshold', '0',  // Disable scene change detection
+            '-f', 'hls',
+            '-hls_time', '2',
+            '-hls_list_size', '900',  // Keep 30 minutes of segments (900 * 2 seconds)
+            '-hls_flags', 'delete_segments+append_list+discont_start+split_by_time',
+            '-hls_segment_type', 'mpegts',
+            '-hls_init_time', '2',
+            '-hls_allow_cache', '0',
+            '-hls_segment_filename', path.join(outputDir, `${hour}-${quality}_%03d.ts`),
+            path.join(outputDir, `${hour}-${quality}.m3u8`)
         ];
 
-        if (quality === 'low') {
-            command.push(
-                '-s', `${this.lowQuality.width}x${this.lowQuality.height}`,
-                '-r', this.fps.toString(),
-                '-b:v', this.lowQuality.bitrate,
-                '-maxrate', this.lowQuality.bitrate,
-                '-bufsize', `${parseInt(this.lowQuality.bitrate) * 2}k`
-            );
-        }
-
-        command.push(
-            '-f', 'hls',
-            '-hls_time', '6',
-            '-hls_list_size', '10',
-            '-hls_flags', 'delete_segments',
-            '-hls_segment_filename', path.join(path.dirname(outputPath), `${hour}-${quality}_%03d.ts`),
-            outputPath
-        );
-
-        return command;
+        return [this.ffmpegPath, ...baseArgs];
     }
 
     // Configuration summary for debugging
     getSummary() {
         return {
             environment: this.nodeEnv,
-            server: { host: this.host, port: this.port },
-            cameras: this.cameraIds,
-            retention: `${this.retentionDays} days`,
+            server: { 
+                host: this.host || 'localhost', 
+                port: this.port || 3000 
+            },
+            cameras: this.cameraIds || [],
+            rtsp: {
+                host: this.rtspHost,
+                port: this.rtspPort,
+                user: this.rtspUser,
+                cameras: this.cameraIds
+            },
+            retention: `${this.retentionDays || 1} days`,
             qualities: ['low (480p)', 'high (native)'],
-            fps: this.fps,
-            autoRestart: this.autoRestart,
+            fps: this.fps || 12,
+            autoRestart: this.autoRestart || false,
             paths: {
-                hls: this.hlsPath,
-                logs: this.logsPath,
-                public: this.publicPath
-            }
+                hls: this.hlsPath || './hls',
+                logs: this.logsPath || './logs',
+                public: this.publicPath || './public'
+            },
+            minMotionRetentionDays: this.minMotionRetentionDays || 7,
+            maxStoragePerCamera: this.maxStoragePerCamera || 50,
+            keepMotionEvents: this.keepMotionEvents || false,
+            quotaAction: this.quotaAction || 'delete-oldest',
+            storageCheckInterval: this.storageCheckInterval || 15
         };
     }
 }

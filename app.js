@@ -6,6 +6,7 @@ const config = require('./utils/config');
 const { logger } = require('./utils/logger');
 const streamManager = require('./utils/streamManager');
 const cleanupManager = require('./utils/cleanupManager');
+const retentionManager = require('./utils/retentionManager');
 
 class CCTVStreamingApp {
     constructor() {
@@ -33,8 +34,8 @@ class CCTVStreamingApp {
             // 5. Initialize streaming
             await this.initializeStreaming();
             
-            // 6. Start cleanup manager
-            this.startCleanup();
+            // 6. Start managers
+            this.startManagers();
             
             // 7. Setup graceful shutdown
             this.setupGracefulShutdown();
@@ -117,6 +118,21 @@ class CCTVStreamingApp {
         // API routes (with /api prefix)
         this.app.use('/api/streams', streamRoutes);
         this.app.use('/api/system', systemRoutes);
+        
+        // Add retention management routes
+        this.app.get('/api/retention/stats', (req, res) => {
+            res.json(retentionManager.getStats());
+        });
+
+        this.app.put('/api/retention/policy/:cameraId', express.json(), (req, res) => {
+            try {
+                const { cameraId } = req.params;
+                retentionManager.updatePolicy(cameraId, req.body);
+                res.json({ success: true });
+            } catch (error) {
+                res.status(400).json({ error: error.message });
+            }
+        });
         
         // Direct routes (without /api prefix for backward compatibility)
         this.app.use('/streams', streamRoutes);
@@ -212,56 +228,45 @@ class CCTVStreamingApp {
         }
     }
 
-    startCleanup() {
-        logger.info('🧹 Starting cleanup manager');
+    startManagers() {
+        // Start cleanup manager
+        cleanupManager.start();
         
-        try {
-            cleanupManager.start();
-            logger.info('✅ Cleanup manager started');
-        } catch (error) {
-            logger.error('❌ Failed to start cleanup manager:', error);
-            // Don't throw - cleanup is not critical for startup
-        }
+        // Start retention manager
+        retentionManager.start();
+        
+        logger.info('System managers started successfully');
     }
 
     setupGracefulShutdown() {
         const shutdown = async (signal) => {
-            if (this.isShuttingDown) {
-                logger.warn('Shutdown already in progress, forcing exit');
-                process.exit(1);
-            }
-            
+            if (this.isShuttingDown) return;
             this.isShuttingDown = true;
-            logger.info(`🛑 Received ${signal}, starting graceful shutdown`);
             
-            const shutdownTimeout = setTimeout(() => {
-                logger.error('❌ Graceful shutdown timed out, forcing exit');
-                process.exit(1);
-            }, 30000); // 30 second timeout
+            logger.info(`Received ${signal}, starting graceful shutdown...`);
             
             try {
-                // 1. Stop accepting new connections
+                // Stop retention manager
+                retentionManager.stop();
+                
+                // Stop cleanup manager
+                cleanupManager.stop();
+                
+                // Stop stream manager
+                await streamManager.stopAll();
+                
+                // Close HTTP server
                 if (this.server) {
-                    this.server.close(() => {
-                        logger.info('✅ HTTP server closed');
+                    await new Promise((resolve) => {
+                        this.server.close(resolve);
                     });
                 }
                 
-                // 2. Stop streaming
-                await streamManager.shutdown();
-                
-                // 3. Stop cleanup manager
-                cleanupManager.stop();
-                
-                // 4. Final log
-                logger.info('✅ Graceful shutdown completed');
-                
-                clearTimeout(shutdownTimeout);
+                logger.info('Graceful shutdown completed');
                 process.exit(0);
                 
             } catch (error) {
-                logger.error('❌ Error during shutdown:', error);
-                clearTimeout(shutdownTimeout);
+                logger.error('Error during shutdown:', error);
                 process.exit(1);
             }
         };

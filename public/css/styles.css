@@ -1,0 +1,48 @@
+/* Play prompt styles */
+.play-prompt {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0, 0, 0, 0.7);
+    padding: 15px;
+    border-radius: 8px;
+    text-align: center;
+    color: white;
+}
+
+.play-prompt button {
+    margin-top: 10px;
+    padding: 8px 16px;
+    background: #ef4444;
+    border: none;
+    color: white;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.play-prompt button:hover {
+    background: #dc2626;
+}
+
+/* Error retry button */
+.error-retry-btn {
+    margin-top: 10px;
+    padding: 8px 16px;
+    background: #dc2626;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.error-retry-btn:hover {
+    background: #b91c1c;
+}
+
+/* Header status display */
+.header-status {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+} 

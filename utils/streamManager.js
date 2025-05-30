@@ -16,13 +16,18 @@ class StreamManager {
 
     // Initialize streams for all cameras
     async initializeStreams() {
-        logger.info('Initializing streams for all configured cameras');
+        logger.info('🚀 Initializing streams for all configured cameras');
+        logger.info(`📹 Configured cameras: [${config.cameraIds.join(', ')}]`);
+        logger.info(`🌐 RTSP Host: ${config.rtspHost}:${config.rtspPort}`);
+        logger.info(`👤 RTSP User: ${config.rtspUser}`);
+        logger.info(`🔧 FFmpeg Path: ${config.ffmpegPath}`);
         
         for (const cameraId of config.cameraIds) {
+            logger.info(`🎬 Starting streams for camera ${cameraId}...`);
             await this.startCameraStreams(cameraId);
         }
         
-        logger.info(`Initialized streams for ${config.cameraIds.length} cameras`);
+        logger.info(`✅ Stream initialization completed for ${config.cameraIds.length} cameras`);
     }
 
     // Start both quality streams for a camera
@@ -53,7 +58,11 @@ class StreamManager {
             const command = config.getFFmpegCommand(cameraId, quality);
             const [ffmpegPath, ...args] = command;
             
-            logger.debug(`Starting ${quality} stream for camera ${cameraId}`, { command: command.join(' ') });
+            // Log the RTSP URL being used (with hidden password)
+            const rtspUrl = config.getRtspUrl(cameraId);
+            const safeUrl = rtspUrl.replace(/:.*@/, ':***@');
+            logger.info(`🎥 Starting ${quality} stream for camera ${cameraId} from: ${safeUrl}`);
+            logger.debug(`🔧 FFmpeg command: ${command.join(' ')}`);
             
             // Spawn FFmpeg process
             const ffmpegProcess = spawn(ffmpegPath, args, {
@@ -70,14 +79,16 @@ class StreamManager {
             // Setup process event handlers
             this.setupProcessHandlers(ffmpegProcess, cameraId, quality);
             
-            logger.info(`Started ${quality} stream for camera ${cameraId} (PID: ${ffmpegProcess.pid})`);
+            logger.info(`✅ Started ${quality} stream for camera ${cameraId} (PID: ${ffmpegProcess.pid})`);
             
         } catch (error) {
-            logger.error(`Failed to start ${quality} stream for camera ${cameraId}:`, error);
+            logger.error(`❌ Failed to start ${quality} stream for camera ${cameraId}:`, error.message);
+            logger.error(`🔍 Error details:`, error);
             this.updateStreamStatus(cameraId, quality, 'error');
             
             // Attempt restart if configured
             if (config.autoRestart) {
+                logger.info(`🔄 Auto-restart enabled, scheduling restart for ${streamKey}`);
                 this.scheduleRestart(cameraId, quality);
             }
         }
@@ -88,28 +99,60 @@ class StreamManager {
         const streamKey = `${cameraId}-${quality}`;
         
         process.stdout.on('data', (data) => {
-            // Always log stdout to see what's happening
-            logger.info(`FFmpeg stdout [${streamKey}]:`, data.toString().trim());
+            const message = data.toString().trim();
+            
+            // Only log if message is not empty
+            if (message) {
+                logger.info(`FFmpeg stdout [${streamKey}]:`, message);
+            }
         });
 
         process.stderr.on('data', (data) => {
             const message = data.toString().trim();
-            // Always log stderr to see what's happening
-            logger.info(`FFmpeg stderr [${streamKey}]:`, message);
             
-            // Look for error patterns
+            // Only log if message is not empty
+            if (message) {
+                // Enhanced logging with different levels based on content
+                if (message.includes('Error') || message.includes('Failed') || message.includes('Connection refused')) {
+                    logger.error(`🔴 FFmpeg ERROR [${streamKey}]:`, message);
+                } else if (message.includes('Warning') || message.includes('timeout')) {
+                    logger.warn(`🟡 FFmpeg WARNING [${streamKey}]:`, message);
+                } else if (message.includes('Opening') || message.includes('Stream') || message.includes('Video:') || message.includes('Audio:')) {
+                    logger.info(`🔵 FFmpeg INFO [${streamKey}]:`, message);
+                } else {
+                    logger.debug(`⚪ FFmpeg DEBUG [${streamKey}]:`, message);
+                }
+            }
+            
+            // Look for specific error patterns with detailed logging
             if (message.includes('Connection refused') || message.includes('Network is unreachable')) {
-                logger.warn(`Network error for ${streamKey}:`, message);
+                logger.error(`🚨 NETWORK ERROR for ${streamKey}: Cannot reach camera at ${config.getRtspUrl(cameraId).replace(/:.*@/, ':***@')}`);
                 this.updateStreamStatus(cameraId, quality, 'network_error');
-            } else if (message.includes('Invalid data found')) {
-                logger.warn(`Invalid data for ${streamKey}:`, message);
+            } else if (message.includes('Invalid data found') || message.includes('No such file or directory')) {
+                logger.error(`🚨 STREAM ERROR for ${streamKey}: Invalid RTSP stream or wrong URL format`);
                 this.updateStreamStatus(cameraId, quality, 'data_error');
+            } else if (message.includes('401 Unauthorized') || message.includes('Authentication failed')) {
+                logger.error(`🚨 AUTH ERROR for ${streamKey}: Wrong username/password for camera`);
+                this.updateStreamStatus(cameraId, quality, 'auth_error');
+            } else if (message.includes('404 Not Found') || message.includes('Stream not found')) {
+                logger.error(`🚨 STREAM NOT FOUND for ${streamKey}: Camera channel ${cameraId} does not exist`);
+                this.updateStreamStatus(cameraId, quality, 'not_found');
             }
         });
 
         process.on('close', (code, signal) => {
-            logger.warn(`FFmpeg process ${streamKey} closed with code ${code}, signal ${signal}`);
-            this.updateStreamStatus(cameraId, quality, 'stopped');
+            if (code === 0) {
+                logger.info(`✅ FFmpeg process ${streamKey} closed cleanly`);
+            } else {
+                logger.error(`❌ FFmpeg process ${streamKey} closed with ERROR code ${code}, signal ${signal}`);
+                if (code === 1) {
+                    logger.error(`🔍 Exit code 1 usually means: Connection failed, wrong URL, or authentication issue`);
+                } else if (code === 255 || code === -1) {
+                    logger.error(`🔍 Exit code ${code} usually means: Network timeout or camera unreachable`);
+                }
+            }
+            
+            this.updateStreamStatus(cameraId, quality, code === 0 ? 'stopped' : 'error');
             
             // Remove from active streams
             if (this.activeStreams.has(cameraId)) {
@@ -118,15 +161,23 @@ class StreamManager {
             
             // Auto-restart if configured and not manually stopped
             if (config.autoRestart && code !== 0) {
+                logger.warn(`🔄 Auto-restarting ${streamKey} due to error (exit code: ${code})`);
                 this.scheduleRestart(cameraId, quality);
             }
         });
 
         process.on('error', (error) => {
-            logger.error(`FFmpeg process error for ${streamKey}:`, error);
+            logger.error(`💥 FFmpeg process SPAWN ERROR for ${streamKey}:`, error.message);
+            if (error.code === 'ENOENT') {
+                logger.error(`🔍 ENOENT error means: FFmpeg not found. Check FFMPEG_PATH in environment`);
+            } else if (error.code === 'EACCES') {
+                logger.error(`🔍 EACCES error means: Permission denied to run FFmpeg`);
+            }
+            logger.error(`🔍 Full error:`, error);
             this.updateStreamStatus(cameraId, quality, 'error');
             
             if (config.autoRestart) {
+                logger.info(`🔄 Scheduling restart after spawn error for ${streamKey}`);
                 this.scheduleRestart(cameraId, quality);
             }
         });

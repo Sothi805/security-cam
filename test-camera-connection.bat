@@ -1,14 +1,15 @@
 @echo off
-echo Testing camera connectivity on production PC...
+echo =================================================================
+echo                HIKVISION CAMERA CONNECTION TEST
+echo =================================================================
+echo.
+echo Testing camera connection using FFprobe...
+echo Camera: 192.168.0.105:554 (Channel 102)
 echo.
 
-echo 1. Testing network connectivity to camera...
-ping -n 4 192.168.0.105
+REM Load environment variables from dotenv
+REM Using %RTSP_USER% and %RTSP_PASS% from environment
+ffprobe -v quiet -print_format json -show_streams -rtsp_transport tcp -timeout 10000000 "rtsp://%RTSP_USER%:%RTSP_PASS%@192.168.0.105:554/Streaming/Channels/102"
 
 echo.
-echo 2. Testing RTSP connection with FFprobe...
-ffprobe -v quiet -print_format json -show_streams -rtsp_transport tcp -timeout 10000000 "rtsp://admin:iME@1012@192.168.0.105:554/Streaming/Channels/102"
-
-echo.
-echo 3. If both tests pass, cameras should work!
-pause 
+echo Test completed. Check output above for connection status. 

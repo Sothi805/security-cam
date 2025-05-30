@@ -1,27 +1,26 @@
+require('dotenv').config();
 const config = require('./utils/config');
 
 console.log('='.repeat(60));
 console.log('RTSP URL Verification Test');
 console.log('='.repeat(60));
 console.log('');
-console.log('Generated RTSP URL:', config.getRtspUrl('102'));
-console.log('Expected VLC URL:   rtsp://admin:iME%401012@192.168.0.105:554/Streaming/Channels/102');
+console.log('Testing URL generation...');
+console.log('Config RTSP URL:', config.getRtspUrl('102'));
+console.log('Expected VLC URL: rtsp://admin:***@192.168.0.105:554/Streaming/Channels/102');
 console.log('');
 
-const generated = config.getRtspUrl('102');
-const expected = 'rtsp://admin:iME%401012@192.168.0.105:554/Streaming/Channels/102';
+// Test URL generation
+const testCameraId = '102';
+const generated = config.getRtspUrl(testCameraId);
+const expected = `rtsp://${process.env.RTSP_USER}:${encodeURIComponent(process.env.RTSP_PASS)}@${process.env.RTSP_HOST}:${process.env.RTSP_PORT}/Streaming/Channels/${testCameraId}`;
 
-if (generated === expected) {
-    console.log('✅ PERFECT MATCH! URLs are identical.');
-} else {
-    console.log('❌ URLs do not match!');
-    console.log('');
-    console.log('Differences:');
-    console.log('Generated:', generated);
-    console.log('Expected: ', expected);
-}
+console.log('Generated:', generated);
+console.log('Expected: ', expected);
+console.log('Match:', generated === expected);
 
-console.log('');
+// Test path generation
+console.log('\nTesting path generation...');
 console.log('Components check:');
 console.log('- RTSP User:', config.rtspUser);
 console.log('- RTSP Password (raw):', config.rtspPassword);

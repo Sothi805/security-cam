@@ -4,8 +4,10 @@
   "description": "Professional CCTV Streaming Backend with Flutter compatibility, real-time streaming, and historical playback",
   "main": "app.js",
   "scripts": {
-    "dev": "node scripts/setup-dev.js",
-    "production": "node scripts/setup-production.js",
+    "setup:dev": "node setup-env.js development",
+    "setup:prod": "node setup-env.js production",
+    "dev": "npm run setup:dev && node scripts/setup-dev.js",
+    "production": "npm run setup:prod && node scripts/setup-production.js",
     "start": "node app.js",
     "test": "node scripts/test-cameras.js"
   },
@@ -35,9 +37,7 @@
     "dotenv": "^16.3.1",
     "node-schedule": "^2.1.1",
     "moment": "^2.29.4",
-    "fs-extra": "^11.1.1",
-    "child_process": "^1.0.2",
-    "path": "^0.12.7"
+    "fs-extra": "^11.1.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

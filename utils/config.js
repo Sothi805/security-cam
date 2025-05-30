@@ -21,7 +21,7 @@ class Config {
         this.cameraIds = process.env.CAMERA_IDS ? 
             process.env.CAMERA_IDS.split(',').map(id => id.trim()) : ['102'];
         this.rtspUser = process.env.RTSP_USER || 'admin';
-        this.rtspPassword = process.env.RTSP_PASSWORD || '';
+        this.rtspPassword = process.env.RTSP_PASSWORD || process.env.RTSP_PASS || '';
         this.rtspHost = process.env.RTSP_HOST || '192.168.0.105';
         this.rtspPort = parseInt(process.env.RTSP_PORT) || 554;
         

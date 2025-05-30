@@ -827,7 +827,7 @@
 
           updateConnectionStatus(true);
           updateSystemMetrics(systemData);
-          updateCamerasGrid(camerasData);
+          await updateCamerasGrid(camerasData);
           hideError();
         } catch (error) {
           console.error("Dashboard load error:", error);
@@ -880,7 +880,7 @@
       }
 
       // Update cameras grid
-      function updateCamerasGrid(cameras) {
+      async function updateCamerasGrid(cameras) {
         const grid = document.getElementById("camerasGrid");
         const loadingState = document.getElementById("loadingState");
 
@@ -892,40 +892,58 @@
         });
         hlsPlayers.clear();
 
-        // For testing, assume camera 102 is always active since we know it works
-        const allCameras = CAMERA_IDS.map((id) => ({
-          camera_id: id,
-          status: {
-            running: { high: true, low: true }, // Force camera to be considered active
-            restartAttempts: 0,
-            healthCheck: true
-          }
-        }));
+        // Fetch real camera data from API instead of hardcoded test data
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/streams/cameras`);
+          const data = await response.json();
+          const allCameras = data.cameras || [];
 
-        // Update active camera count
-        document.getElementById("activeCameraCount").textContent =
-          allCameras.length;
+          // Update active camera count
+          document.getElementById("activeCameraCount").textContent =
+            allCameras.filter(camera => camera.status.low.running || camera.status.high.running).length;
 
-        // Generate camera cards
-        grid.innerHTML = allCameras
-          .map((camera) => createCameraCard(camera))
-          .join("");
+          // Generate camera cards
+          grid.innerHTML = allCameras
+            .map((camera) => createCameraCard(camera))
+            .join("");
 
-        // Initialize HLS players for all cameras
-        allCameras.forEach((camera) => {
-          initializeHLSPlayer(camera);
-        });
+          // Initialize HLS players for running cameras only
+          allCameras
+            .filter(camera => camera.status.low.running || camera.status.high.running)
+            .forEach((camera) => {
+              initializeHLSPlayer(camera);
+            });
+        } catch (error) {
+          console.error('Failed to load camera data:', error);
+          // Fallback to hardcoded data only if API fails
+          const allCameras = CAMERA_IDS.map((id) => ({
+            camera_id: id,
+            status: {
+              low: { running: false, healthy: false },
+              high: { running: false, healthy: false },
+              restartAttempts: { low: 0, high: 0 }
+            }
+          }));
+          
+          grid.innerHTML = allCameras
+            .map((camera) => createCameraCard(camera))
+            .join("");
+        }
       }
 
       // Create camera card HTML
       function createCameraCard(camera) {
+        const isRunning = camera.status.low.running || camera.status.high.running;
+        const statusClass = isRunning ? 'online' : 'offline';
+        const statusText = isRunning ? 'Active' : 'Offline';
+        
         return `
           <div class="camera-card">
             <div class="camera-header">
               <div class="camera-id">Camera ${camera.camera_id}</div>
               <div class="camera-status">
-                <div class="status-dot online"></div>
-                Active
+                <div class="status-dot ${statusClass}"></div>
+                ${statusText}
               </div>
             </div>
             
@@ -1046,8 +1064,11 @@
           }
         }, 1000);
 
-        // Use the new live stream path
-        const streamUrl = `${API_BASE_URL}/hls/${camera.camera_id}/live/live.m3u8`;
+        // Use the correct live stream path format that matches FFmpeg output
+        const now = new Date();
+        const date = now.toISOString().split('T')[0]; // YYYY-MM-DD
+        const hour = String(now.getHours()).padStart(2, '0') + '-' + String(Math.floor(now.getMinutes() / 1) * 1).padStart(2, '0'); // HH-mm (current minute)
+        const streamUrl = `${API_BASE_URL}/hls/${camera.camera_id}/${date}/${hour}-low.m3u8`;
         hls.loadSource(streamUrl);
         hls.attachMedia(videoElement);
 

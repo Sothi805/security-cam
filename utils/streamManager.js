@@ -527,7 +527,7 @@ class StreamManager {
             
             const stats = await fs.stat(streamPath);
             const ageMs = Date.now() - stats.mtime.getTime();
-            const maxAge = 120000; // 2 minutes - give FFmpeg time to start and transcode
+            const maxAge = 300000; // 5 minutes - more forgiving for hour transitions and startup delays
             
             if (ageMs > maxAge) {
                 return { healthy: false, reason: 'file_stale', ageMs };

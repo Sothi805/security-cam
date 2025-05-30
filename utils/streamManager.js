@@ -99,19 +99,21 @@ class StreamManager {
         const streamKey = `${cameraId}-${quality}`;
         
         process.stdout.on('data', (data) => {
-            const message = data.toString().trim();
+            const rawMessage = data.toString();
+            const message = rawMessage.trim();
             
-            // Only log if message has actual content (not empty string)
-            if (message.length > 0) {
+            // Only log if message has actual visible content (not just whitespace, newlines, or empty)
+            if (message && message.length > 0 && message.replace(/\s/g, '').length > 0) {
                 logger.info(`FFmpeg stdout [${streamKey}]:`, message);
             }
         });
 
         process.stderr.on('data', (data) => {
-            const message = data.toString().trim();
+            const rawMessage = data.toString();
+            const message = rawMessage.trim();
             
-            // Only log if message has actual content (not empty string)
-            if (message.length > 0) {
+            // Only log if message has actual visible content (not just whitespace, newlines, or empty)
+            if (message && message.length > 0 && message.replace(/\s/g, '').length > 0) {
                 // Enhanced logging with different levels based on content
                 if (message.includes('Error') || message.includes('Failed') || message.includes('Connection refused')) {
                     logger.error(`🔴 FFmpeg ERROR [${streamKey}]:`, message);

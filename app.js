@@ -163,7 +163,7 @@ class CCTVStreamingApp {
                 endpoints: {
                     health: '/health',
                     cameras: '/api/streams/cameras',
-                    live: '/api/streams/live/:cameraId/:quality',
+                    live: '/api/streams/live/:cameraId',
                     playback: '/api/streams/playback/:cameraId',
                     system: '/api/system/metrics'
                 }
@@ -300,10 +300,10 @@ class CCTVStreamingApp {
             '',
             '📺 Stream URLs:',
             ...config.cameraIds.map(id => 
-                `   Camera ${id}: http://${config.host}:${config.port}/hls/${id}/[date]/[hour]-[quality].m3u8`
+                `   Camera ${id}: http://${config.host}:${config.port}/hls/${id}/[date]/[hour]-live.m3u8`
             ),
             '',
-            '🎛️  Available Qualities: low (480p), high (native)',
+            '🎛️  Available Qualities: low (480p)',
             `🗄️  Retention: ${config.retentionDays} days`,
             `🔧 Environment: ${config.nodeEnv}`,
             '='.repeat(60),

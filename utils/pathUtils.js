@@ -16,25 +16,25 @@ class PathUtils {
     }
 
     // Get live stream path (current hour)
-    getLiveStreamPath(cameraId, quality = 'low') {
+    getLiveStreamPath(cameraId) {
         const date = moment().format('YYYY-MM-DD');
         const hour = moment().format('HH-mm');
-        return config.getStreamPath(cameraId, quality, date, hour);
+        return config.getStreamPath(cameraId, date, hour);
     }
 
     // Get historical stream path
-    getHistoricalStreamPath(cameraId, quality, date, hour) {
-        return config.getStreamPath(cameraId, quality, date, hour);
+    getHistoricalStreamPath(cameraId, date, hour) {
+        return config.getStreamPath(cameraId, date, hour);
     }
 
     // Get web URL for stream
-    getStreamWebUrl(cameraId, quality = 'low', date = null, hour = null) {
-        return config.getStreamUrl(cameraId, quality, date, hour);
+    getStreamWebUrl(cameraId, date = null, hour = null) {
+        return config.getStreamUrl(cameraId, date, hour);
     }
 
     // Get live stream web URL
-    getLiveStreamWebUrl(cameraId, quality = 'low') {
-        return config.getLiveStreamUrl(cameraId, quality);
+    getLiveStreamWebUrl(cameraId) {
+        return config.getLiveStreamUrl(cameraId);
     }
 
     // Ensure directory exists for a stream path
@@ -62,7 +62,7 @@ class PathUtils {
         }
     }
 
-    // Get all available qualities for a specific hour
+    // Get all available qualities for a specific hour (now always returns single stream)
     async getAvailableQualities(cameraId, date, hour) {
         try {
             const dateDir = config.getStreamDirectory(cameraId, date);
@@ -71,24 +71,22 @@ class PathUtils {
             }
 
             const files = await fs.readdir(dateDir);
-            const qualities = [];
+            const liveFile = `${hour}-live.m3u8`;
             
-            const lowFile = `${hour}-low.m3u8`;
-            const highFile = `${hour}-high.m3u8`;
+            if (files.includes(liveFile)) {
+                return ['live'];
+            }
             
-            if (files.includes(lowFile)) qualities.push('low');
-            if (files.includes(highFile)) qualities.push('high');
-            
-            return qualities;
+            return [];
         } catch (error) {
             return [];
         }
     }
 
     // Check if a stream file exists
-    async streamExists(cameraId, quality, date = null, hour = null) {
+    async streamExists(cameraId, date = null, hour = null) {
         try {
-            const streamPath = config.getStreamPath(cameraId, quality, date, hour);
+            const streamPath = config.getStreamPath(cameraId, date, hour);
             return await fs.pathExists(streamPath);
         } catch (error) {
             return false;
@@ -96,9 +94,9 @@ class PathUtils {
     }
 
     // Get stream file stats
-    async getStreamStats(cameraId, quality, date = null, hour = null) {
+    async getStreamStats(cameraId, date = null, hour = null) {
         try {
-            const streamPath = config.getStreamPath(cameraId, quality, date, hour);
+            const streamPath = config.getStreamPath(cameraId, date, hour);
             if (!await fs.pathExists(streamPath)) {
                 return null;
             }
@@ -234,9 +232,9 @@ class PathUtils {
     }
 
     // Get stream playlist content for a specific time
-    async getPlaylistContent(cameraId, quality, date, hour) {
+    async getPlaylistContent(cameraId, date, hour) {
         try {
-            const streamPath = config.getStreamPath(cameraId, quality, date, hour);
+            const streamPath = config.getStreamPath(cameraId, date, hour);
             
             if (!await fs.pathExists(streamPath)) {
                 return null;
@@ -272,17 +270,17 @@ class PathUtils {
     }
 
     // Get playback URLs for a time range
-    async getPlaybackUrls(cameraId, quality, startDate, startHour, endDate, endHour) {
+    async getPlaybackUrls(cameraId, startDate, startHour, endDate, endHour) {
         const timeRange = this.buildTimeRange(startDate, startHour, endDate, endHour);
         const urls = [];
         
         for (const timePoint of timeRange) {
-            const exists = await this.streamExists(cameraId, quality, timePoint.date, timePoint.hour);
+            const exists = await this.streamExists(cameraId, timePoint.date, timePoint.hour);
             
             if (exists) {
                 urls.push({
                     ...timePoint,
-                    url: this.getStreamWebUrl(cameraId, quality, timePoint.date, timePoint.hour),
+                    url: this.getStreamWebUrl(cameraId, timePoint.date, timePoint.hour),
                     available: true
                 });
             } else {
@@ -300,11 +298,6 @@ class PathUtils {
     // Validate camera ID
     isValidCameraId(cameraId) {
         return config.cameraIds.includes(cameraId.toString());
-    }
-
-    // Validate quality parameter
-    isValidQuality(quality) {
-        return ['low', 'high'].includes(quality);
     }
 
     // Validate date format
@@ -337,9 +330,9 @@ class PathUtils {
     }
 
     // Get stream health information
-    async getStreamHealth(cameraId, quality) {
+    async getStreamHealth(cameraId) {
         try {
-            const streamPath = config.getStreamPath(cameraId, quality);
+            const streamPath = config.getStreamPath(cameraId);
             const streamDir = path.dirname(streamPath);
             
             // Check if stream directory exists
@@ -412,7 +405,7 @@ class PathUtils {
                 lastCheck: moment().toISOString()
             };
         } catch (error) {
-            logger.error(`Failed to check stream health for camera ${cameraId} (${quality}):`, error);
+            logger.error(`Failed to check stream health for camera ${cameraId}:`, error);
             return {
                 healthy: false,
                 error: error.message,
@@ -422,9 +415,9 @@ class PathUtils {
     }
 
     // Clean up specific stream files
-    async cleanupStreamFiles(cameraId, quality, date, hour) {
+    async cleanupStreamFiles(cameraId, date, hour) {
         try {
-            const streamPath = config.getStreamPath(cameraId, quality, date, hour);
+            const streamPath = config.getStreamPath(cameraId, date, hour);
             const streamDir = path.dirname(streamPath);
             
             // Remove playlist file
@@ -435,7 +428,7 @@ class PathUtils {
             // Remove associated segment files
             if (await fs.pathExists(streamDir)) {
                 const files = await fs.readdir(streamDir);
-                const prefix = `${hour}-${quality}_`;
+                const prefix = `${hour}-live_`;
                 
                 for (const file of files) {
                     if (file.startsWith(prefix) && file.endsWith('.ts')) {

@@ -23,24 +23,15 @@ router.get('/cameras', async (req, res) => {
             const health = healthCheck[cameraId] || {};
             
             cameras.push({
-                id: cameraId,
+                camera_id: cameraId,
                 rtsp_url: config.getRtspUrl(cameraId).replace(/:.*@/, ':***@'), // Hide password
-                qualities: ['low', 'high'],
                 status: {
-                    low: {
-                        running: status.low?.status === 'running',
-                        status: status.low?.status || 'unknown',
-                        healthy: health.low?.healthy || false,
-                        lastUpdated: status.low?.timestamp
-                    },
-                    high: {
-                        running: status.high?.status === 'running',
-                        status: status.high?.status || 'unknown', 
-                        healthy: health.high?.healthy || false,
-                        lastUpdated: status.high?.timestamp
-                    }
+                    running: status.status === 'running',
+                    status: status.status || 'unknown',
+                    healthy: health.healthy || false,
+                    lastUpdated: status.timestamp
                 },
-                restartAttempts: status.restartAttempts || { low: 0, high: 0 }
+                restartAttempts: status.restartAttempts || 0
             });
         }
         
@@ -57,12 +48,12 @@ router.get('/cameras', async (req, res) => {
 });
 
 /**
- * GET /live/:cameraId/:quality
- * Get live stream URL for specific camera and quality
+ * GET /live/:cameraId
+ * Get live stream URL for specific camera
  */
-router.get('/live/:cameraId/:quality', async (req, res) => {
+router.get('/live/:cameraId', async (req, res) => {
     try {
-        const { cameraId, quality } = req.params;
+        const { cameraId } = req.params;
         
         // Validate camera ID
         if (!pathUtils.isValidCameraId(cameraId)) {
@@ -72,23 +63,14 @@ router.get('/live/:cameraId/:quality', async (req, res) => {
             });
         }
         
-        // Validate quality
-        if (!pathUtils.isValidQuality(quality)) {
-            return res.status(400).json({
-                error: 'Invalid quality',
-                available_qualities: ['low', 'high']
-            });
-        }
-        
         // Get live stream URL
-        const streamUrl = config.getLiveStreamUrl(cameraId, quality);
+        const streamUrl = config.getLiveStreamUrl(cameraId);
         
         // Check if stream is healthy
-        const health = await pathUtils.getStreamHealth(cameraId, quality);
+        const health = await pathUtils.getStreamHealth(cameraId);
         
         res.json({
             camera_id: cameraId,
-            quality,
             stream_url: streamUrl,
             full_url: `${req.protocol}://${req.get('host')}${streamUrl}`,
             status: health.healthy ? 'available' : 'unavailable',
@@ -103,56 +85,13 @@ router.get('/live/:cameraId/:quality', async (req, res) => {
 });
 
 /**
- * GET /live/:cameraId
- * Get live stream URLs for all qualities of a camera
- */
-router.get('/live/:cameraId', async (req, res) => {
-    try {
-        const { cameraId } = req.params;
-        
-        // Validate camera ID
-        if (!pathUtils.isValidCameraId(cameraId)) {
-            return res.status(404).json({
-                error: 'Camera not found',
-                available_cameras: config.cameraIds
-            });
-        }
-        
-        const qualities = ['low', 'high'];
-        const streams = {};
-        
-        for (const quality of qualities) {
-            const streamUrl = config.getLiveStreamUrl(cameraId, quality);
-            const health = await pathUtils.getStreamHealth(cameraId, quality);
-            
-            streams[quality] = {
-                stream_url: streamUrl,
-                full_url: `${req.protocol}://${req.get('host')}${streamUrl}`,
-                status: health.healthy ? 'available' : 'unavailable',
-                health
-            };
-        }
-        
-        res.json({
-            camera_id: cameraId,
-            streams,
-            timestamp: moment().toISOString()
-        });
-        
-    } catch (error) {
-        logger.error(`Failed to get live streams for camera ${req.params.cameraId}:`, error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-/**
  * GET /playback/:cameraId
  * Get available playback data for a camera
  */
 router.get('/playback/:cameraId', async (req, res) => {
     try {
         const { cameraId } = req.params;
-        const { date, startHour, endHour, quality = 'low' } = req.query;
+        const { date, startHour, endHour } = req.query;
         
         // Validate camera ID
         if (!pathUtils.isValidCameraId(cameraId)) {
@@ -176,11 +115,10 @@ router.get('/playback/:cameraId', async (req, res) => {
                 });
             }
             
-            const playbackUrls = await pathUtils.getPlaybackUrls(cameraId, quality, date, startHour, date, endHour);
+            const playbackUrls = await pathUtils.getPlaybackUrls(cameraId, date, startHour, date, endHour);
             
             return res.json({
                 camera_id: cameraId,
-                quality,
                 date,
                 start_hour: startHour,
                 end_hour: endHour,
@@ -197,24 +135,22 @@ router.get('/playback/:cameraId', async (req, res) => {
             camera_id: cameraId,
             available_dates: availableDates,
             recent_hours: recentHours,
-            qualities: ['low', 'high'],
             timestamp: moment().toISOString()
         });
         
     } catch (error) {
-        logger.error(`Failed to get playback info for camera ${req.params.cameraId}:`, error);
+        logger.error(`Failed to get playback data for camera ${req.params.cameraId}:`, error);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
 
 /**
- * POST /restart/:cameraId
- * Restart streams for a specific camera
+ * GET /playback/:cameraId/:date
+ * Get available hours for a specific camera and date
  */
-router.post('/restart/:cameraId', async (req, res) => {
+router.get('/playback/:cameraId/:date', async (req, res) => {
     try {
-        const { cameraId } = req.params;
-        const { quality } = req.body;
+        const { cameraId, date } = req.params;
         
         // Validate camera ID
         if (!pathUtils.isValidCameraId(cameraId)) {
@@ -224,71 +160,178 @@ router.post('/restart/:cameraId', async (req, res) => {
             });
         }
         
-        logger.info(`Manual restart requested for camera ${cameraId}${quality ? ` (${quality} quality)` : ''}`);
-        
-        if (quality) {
-            // Restart specific quality
-            if (!pathUtils.isValidQuality(quality)) {
-                return res.status(400).json({
-                    error: 'Invalid quality',
-                    available_qualities: ['low', 'high']
-                });
-            }
-            
-            await streamManager.restartStream(cameraId, quality);
-            
-            res.json({
-                message: `Restarted ${quality} quality stream for camera ${cameraId}`,
-                camera_id: cameraId,
-                quality,
-                timestamp: moment().toISOString()
-            });
-        } else {
-            // Restart all qualities
-            await streamManager.stopCameraStreams(cameraId);
-            await streamManager.startCameraStreams(cameraId);
-            
-            res.json({
-                message: `Restarted all streams for camera ${cameraId}`,
-                camera_id: cameraId,
-                qualities: ['low', 'high'],
-                timestamp: moment().toISOString()
+        // Validate date
+        if (!pathUtils.isValidDate(date)) {
+            return res.status(400).json({
+                error: 'Invalid date format. Use YYYY-MM-DD'
             });
         }
         
+        const availableHours = await pathUtils.getAvailableHours(cameraId, date);
+        
+        res.json({
+            camera_id: cameraId,
+            date,
+            available_hours: availableHours,
+            count: availableHours.length,
+            timestamp: moment().toISOString()
+        });
+        
     } catch (error) {
-        logger.error(`Failed to restart camera ${req.params.cameraId}:`, error);
+        logger.error(`Failed to get hours for camera ${req.params.cameraId} on ${req.params.date}:`, error);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
 
 /**
- * GET /status
- * Get comprehensive status of all streams
+ * GET /playback/:cameraId/:date/:hour
+ * Get stream URL for specific camera, date and hour
  */
-router.get('/status', async (req, res) => {
+router.get('/playback/:cameraId/:date/:hour', async (req, res) => {
     try {
-        const streamStatus = streamManager.getAllStreamStatus();
-        const healthCheck = await streamManager.checkStreamHealth();
-        const storageStats = await pathUtils.getOverallStorageStats();
+        const { cameraId, date, hour } = req.params;
+        
+        // Validate camera ID
+        if (!pathUtils.isValidCameraId(cameraId)) {
+            return res.status(404).json({
+                error: 'Camera not found',
+                available_cameras: config.cameraIds
+            });
+        }
+        
+        // Validate date
+        if (!pathUtils.isValidDate(date)) {
+            return res.status(400).json({
+                error: 'Invalid date format. Use YYYY-MM-DD'
+            });
+        }
+        
+        // Validate hour
+        if (!pathUtils.isValidHour(hour)) {
+            return res.status(400).json({
+                error: 'Invalid hour format. Use HH-mm'
+            });
+        }
+        
+        // Check if stream exists
+        const exists = await pathUtils.streamExists(cameraId, date, hour);
+        if (!exists) {
+            return res.status(404).json({
+                error: 'Stream not found for specified time',
+                camera_id: cameraId,
+                date,
+                hour
+            });
+        }
+        
+        // Get stream URL and stats
+        const streamUrl = pathUtils.getStreamWebUrl(cameraId, date, hour);
+        const stats = await pathUtils.getStreamStats(cameraId, date, hour);
         
         res.json({
-            streams: streamStatus,
-            health: healthCheck,
-            storage: storageStats,
-            configuration: {
-                cameras: config.cameraIds,
-                retention_days: config.retentionDays,
-                qualities: ['low', 'high'],
-                fps: config.fps
-            },
+            camera_id: cameraId,
+            date,
+            hour,
+            stream_url: streamUrl,
+            full_url: `${req.protocol}://${req.get('host')}${streamUrl}`,
+            stats,
             timestamp: moment().toISOString()
         });
         
     } catch (error) {
-        logger.error('Failed to get streams status:', error);
+        logger.error(`Failed to get stream for camera ${req.params.cameraId} at ${req.params.date} ${req.params.hour}:`, error);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
 
-module.exports = router;
+/**
+ * POST /start/:cameraId
+ * Start streaming for a specific camera
+ */
+router.post('/start/:cameraId', async (req, res) => {
+    try {
+        const { cameraId } = req.params;
+        
+        // Validate camera ID
+        if (!pathUtils.isValidCameraId(cameraId)) {
+            return res.status(404).json({
+                error: 'Camera not found',
+                available_cameras: config.cameraIds
+            });
+        }
+        
+        await streamManager.startCameraStream(cameraId);
+        
+        res.json({
+            message: `Started streaming for camera ${cameraId}`,
+            camera_id: cameraId,
+            timestamp: moment().toISOString()
+        });
+        
+    } catch (error) {
+        logger.error(`Failed to start stream for camera ${req.params.cameraId}:`, error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+/**
+ * POST /stop/:cameraId
+ * Stop streaming for a specific camera
+ */
+router.post('/stop/:cameraId', async (req, res) => {
+    try {
+        const { cameraId } = req.params;
+        
+        // Validate camera ID
+        if (!pathUtils.isValidCameraId(cameraId)) {
+            return res.status(404).json({
+                error: 'Camera not found',
+                available_cameras: config.cameraIds
+            });
+        }
+        
+        await streamManager.stopCameraStream(cameraId);
+        
+        res.json({
+            message: `Stopped streaming for camera ${cameraId}`,
+            camera_id: cameraId,
+            timestamp: moment().toISOString()
+        });
+        
+    } catch (error) {
+        logger.error(`Failed to stop stream for camera ${req.params.cameraId}:`, error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+/**
+ * POST /restart/:cameraId
+ * Restart streaming for a specific camera
+ */
+router.post('/restart/:cameraId', async (req, res) => {
+    try {
+        const { cameraId } = req.params;
+        
+        // Validate camera ID
+        if (!pathUtils.isValidCameraId(cameraId)) {
+            return res.status(404).json({
+                error: 'Camera not found',
+                available_cameras: config.cameraIds
+            });
+        }
+        
+        await streamManager.restartCameraStream(cameraId);
+        
+        res.json({
+            message: `Restarted streaming for camera ${cameraId}`,
+            camera_id: cameraId,
+            timestamp: moment().toISOString()
+        });
+        
+    } catch (error) {
+        logger.error(`Failed to restart stream for camera ${req.params.cameraId}:`, error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+module.exports = router; 

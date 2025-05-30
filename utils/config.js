@@ -108,15 +108,15 @@ class Config {
         console.log(`📁 Created logs directory: ${this.logsPath}`);
     }
 
-    // Path generators for new folder structure: hls/{CAMERA_ID}/{YYYY-MM-DD}/{HH-mm}.m3u8
-    getStreamPath(cameraId, quality) {
-        const date = moment().format('YYYY-MM-DD');
-        const hour = moment().format('HH-mm');
+    // Path generators for new folder structure: hls/{CAMERA_ID}/{YYYY-MM-DD}/{HH-mm}-live.m3u8
+    getStreamPath(cameraId, date = null, hour = null) {
+        if (!date) date = moment().format('YYYY-MM-DD');
+        if (!hour) hour = moment().format('HH-mm');
         return path.join(
             this.hlsPath,
             cameraId.toString(),
             date,
-            `${hour}-${quality}.m3u8`
+            `${hour}-live.m3u8`
         );
     }
 
@@ -139,18 +139,16 @@ class Config {
     }
 
     // Stream URL generators for API responses
-    getStreamUrl(cameraId, quality = 'low', date = null, hour = null) {
+    getStreamUrl(cameraId, date = null, hour = null) {
         if (!date) date = moment().format('YYYY-MM-DD');
         if (!hour) hour = moment().format('HH-mm');
         
-        return `/hls/${cameraId}/${date}/${hour}-${quality}.m3u8`;
+        return `/hls/${cameraId}/${date}/${hour}-live.m3u8`;
     }
 
     // Live stream URL (current hour)
-    getLiveStreamUrl(cameraId, quality = 'low') {
-        const date = moment().format('YYYY-MM-DD');
-        const hour = moment().format('HH-mm');
-        return `/hls/${cameraId}/${date}/${hour}-${quality}.m3u8`;
+    getLiveStreamUrl(cameraId) {
+        return `/hls/${cameraId}/live/live.m3u8`;
     }
 
     // Get available dates for a camera
@@ -173,12 +171,12 @@ class Config {
         fs.readdirSync(dateDir)
             .filter(file => file.endsWith('.m3u8'))
             .forEach(file => {
-                const match = file.match(/^(\d{2}-\d{2})-(low|high)\.m3u8$/);
+                const match = file.match(/^(\d{2}-\d{2})-live\.m3u8$/);
                 if (match) {
                     hours.add(match[1]);
                 }
             });
-        
+
         return Array.from(hours).sort();
     }
 
@@ -189,39 +187,6 @@ class Config {
 
     isProduction() {
         return this.nodeEnv === 'production';
-    }
-
-    // FFmpeg command generators
-    getFFmpegCommand(cameraId, quality) {
-        const date = moment().format('YYYY-MM-DD');
-        const hour = moment().format('HH-mm');
-        const outputDir = path.join(this.hlsPath, cameraId.toString(), date);
-        fs.ensureDirSync(outputDir);
-        
-        // Base arguments for all streams
-        const baseArgs = [
-            '-rtsp_transport', 'tcp',
-            '-user_agent', 'LibVLC/3.0.0',
-            '-i', this.getRtspUrl(cameraId),
-            '-c:v', 'libx264',  // Transcode to H.264 for better compatibility
-            '-preset', 'ultrafast',
-            '-tune', 'zerolatency',
-            '-profile:v', 'baseline',
-            '-level', '3.0',
-            '-g', '30',  // Keyframe interval
-            '-sc_threshold', '0',  // Disable scene change detection
-            '-f', 'hls',
-            '-hls_time', '2',
-            '-hls_list_size', '900',  // Keep 30 minutes of segments (900 * 2 seconds)
-            '-hls_flags', 'delete_segments+append_list+discont_start+split_by_time',
-            '-hls_segment_type', 'mpegts',
-            '-hls_init_time', '2',
-            '-hls_allow_cache', '0',
-            '-hls_segment_filename', path.join(outputDir, `${hour}-${quality}_%03d.ts`),
-            path.join(outputDir, `${hour}-${quality}.m3u8`)
-        ];
-
-        return [this.ffmpegPath, ...baseArgs];
     }
 
     // Configuration summary for debugging
@@ -240,7 +205,7 @@ class Config {
                 cameras: this.cameraIds
             },
             retention: `${this.retentionDays || 1} days`,
-            qualities: ['low (480p)', 'high (native)'],
+            quality: 'Single stream (480p)',
             fps: this.fps || 12,
             autoRestart: this.autoRestart || false,
             paths: {

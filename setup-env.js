@@ -4,8 +4,8 @@ const fs = require('fs-extra');
 const path = require('path');
 
 const ENV_FILES = {
-    development: '../development.env',
-    production: '../production.env'
+    development: './development.env',
+    production: './production.env'
 };
 
 function setupEnvironment(env = 'development') {

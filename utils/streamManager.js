@@ -4,6 +4,7 @@ const path = require('path');
 const moment = require('moment');
 const config = require('./config');
 const { logger } = require('./logger');
+const { PathUtils } = require('./pathUtils');
 
 class StreamManager {
     constructor() {
@@ -15,6 +16,12 @@ class StreamManager {
         this.setupHourlyRotation();
         this.setupRetentionCleanup();
         this.setupSegmentMover();
+        this.pathUtils = new PathUtils();
+        this.init();
+    }
+
+    async init() {
+        await this.pathUtils.init();
     }
 
     // Initialize streams for all cameras
@@ -68,27 +75,58 @@ class StreamManager {
             // Stop existing stream if running
             await this.stopStream(cameraId);
             
-            // Ensure directories exist
-            await this.ensureCameraDirectories(cameraId);
+            // Ensure base directories exist
+            const cameraDir = path.join(config.paths.hls, cameraId.toString());
+            const liveDir = path.join(cameraDir, 'live');
+            
+            await fs.ensureDir(cameraDir);
+            await fs.ensureDir(liveDir);
+            
+            logger.info(`Ensured directories exist for camera ${cameraId}:`);
+            logger.info(`- Camera dir: ${cameraDir}`);
+            logger.info(`- Live dir: ${liveDir}`);
             
             // Get FFmpeg commands for both live and recording
             const liveCommand = this.getLiveStreamCommand(cameraId);
             const recordCommand = this.getRecordingCommand(cameraId);
             
+            // Mask sensitive information in logs
+            const maskCommand = (cmd) => {
+                return cmd.map(arg => {
+                    if (arg.includes('@') && arg.includes('rtsp://')) {
+                        return arg.replace(/:[^:@]+@/, ':***@');
+                    }
+                    return arg;
+                });
+            };
+            
+            logger.info(`Starting FFmpeg processes for camera ${cameraId}:`);
+            logger.info(`Live command: ${maskCommand(liveCommand).join(' ')}`);
+            logger.info(`Record command: ${maskCommand(recordCommand).join(' ')}`);
+            
             // Start both processes
             const [livePath, ...liveArgs] = liveCommand;
             const [recordPath, ...recordArgs] = recordCommand;
             
-            // Spawn FFmpeg processes
+            // Spawn FFmpeg processes with proper stdio options
             const liveProcess = spawn(livePath, liveArgs, {
                 stdio: ['ignore', 'pipe', 'pipe'],
-                detached: false
+                detached: false,
+                windowsHide: true
             });
             
             const recordProcess = spawn(recordPath, recordArgs, {
                 stdio: ['ignore', 'pipe', 'pipe'],
-                detached: false
+                detached: false,
+                windowsHide: true
             });
+
+            if (!liveProcess.pid) {
+                throw new Error(`Failed to start live FFmpeg process for camera ${cameraId}`);
+            }
+            if (!recordProcess.pid) {
+                throw new Error(`Failed to start recording FFmpeg process for camera ${cameraId}`);
+            }
 
             // Store process references
             this.activeStreams.set(cameraId, {
@@ -104,6 +142,7 @@ class StreamManager {
             
         } catch (error) {
             logger.error(`❌ Failed to start stream for camera ${cameraId}:`, error.message);
+            logger.error('Stack trace:', error.stack);
             this.updateStreamStatus(cameraId, 'error');
             
             if (config.autoRestart) {
@@ -116,7 +155,12 @@ class StreamManager {
     getLiveStreamCommand(cameraId) {
         const liveDir = path.join(config.paths.hls, cameraId.toString(), 'live');
         
+        // Ensure live directory exists
+        fs.ensureDirSync(liveDir);
+        logger.info(`Ensuring live directory exists: ${liveDir}`);
+        
         const baseArgs = [
+            '-y',  // Overwrite output files
             '-rtsp_transport', 'tcp',
             '-user_agent', 'LibVLC/3.0.0',
             '-i', this.getRtspUrl(cameraId),
@@ -125,19 +169,21 @@ class StreamManager {
             '-tune', 'zerolatency',
             '-profile:v', 'baseline',
             '-level', '3.0',
-            '-vf', 'scale=640:360',
+            '-s', '640x360',  // Use -s instead of scale filter
             '-b:v', '800k',
             '-maxrate', '856k',
-            '-bufsize', '2M',
+            '-bufsize', '1200k',
+            '-r', '15',  // Force 15fps
             '-g', '30',
             '-keyint_min', '30',
             '-sc_threshold', '0',
             '-f', 'hls',
             '-hls_time', '2',
-            '-hls_list_size', '30',
-            '-hls_flags', 'delete_segments+append_list+discont_start+split_by_time',
+            '-hls_list_size', '3',  // Keep fewer segments
+            '-hls_flags', 'delete_segments+append_list',
             '-hls_segment_type', 'mpegts',
             '-hls_allow_cache', '0',
+            '-method', 'PUT',
             '-hls_segment_filename', path.join(liveDir, 'segment%d.ts'),
             path.join(liveDir, 'live.m3u8')
         ];
@@ -151,7 +197,15 @@ class StreamManager {
         const hour = moment().format('HH');
         const recordingsDir = path.join(config.paths.hls, cameraId.toString(), 'recordings', date, hour);
         
+        // Ensure the directory exists
+        fs.ensureDirSync(path.join(config.paths.hls, cameraId.toString(), 'recordings'));
+        fs.ensureDirSync(path.join(config.paths.hls, cameraId.toString(), 'recordings', date));
+        fs.ensureDirSync(recordingsDir);
+        
+        logger.info(`Created recordings directory: ${recordingsDir}`);
+        
         const baseArgs = [
+            '-y',  // Overwrite output files
             '-rtsp_transport', 'tcp',
             '-user_agent', 'LibVLC/3.0.0',
             '-i', this.getRtspUrl(cameraId),
@@ -159,17 +213,18 @@ class StreamManager {
             '-preset', 'medium',
             '-profile:v', 'main',
             '-level', '4.0',
-            '-vf', 'scale=640:360',
+            '-s', '640x360',  // Use -s instead of scale filter
             '-b:v', '1000k',
             '-maxrate', '1200k',
-            '-bufsize', '4M',
-            '-g', '60',
-            '-keyint_min', '60',
+            '-bufsize', '2000k',
+            '-r', '15',  // Force 15fps
+            '-g', '30',
+            '-keyint_min', '30',
             '-sc_threshold', '0',
             '-f', 'hls',
             '-hls_time', '60',
             '-hls_list_size', '0',
-            '-hls_flags', 'append_list+discont_start+split_by_time',
+            '-hls_flags', 'append_list',
             '-hls_segment_type', 'mpegts',
             '-strftime', '1',
             '-hls_segment_filename', path.join(recordingsDir, '%M.ts'),
@@ -236,7 +291,7 @@ class StreamManager {
     // Move old segments from live to recordings
     async moveOldSegments(cameraId) {
         try {
-            const liveDir = path.join(config.paths.hls, cameraId.toString(), 'live');
+            const liveDir = this.pathUtils.getLiveDir(cameraId);
             const files = await fs.readdir(liveDir);
             const now = moment();
 
@@ -253,27 +308,55 @@ class StreamManager {
                     const hour = moment(stats.mtime).format('HH');
                     const minute = moment(stats.mtime).format('mm');
                     
-                    const recordingsDir = path.join(
-                        config.paths.hls,
-                        cameraId.toString(),
-                        'recordings',
-                        date,
-                        hour
-                    );
-
-                    await fs.ensureDir(recordingsDir);
-                    const targetPath = path.join(recordingsDir, `${minute}.ts`);
+                    // Ensure recording directory exists
+                    await this.pathUtils.ensureRecordingDir(cameraId, date, hour);
+                    
+                    // Get target path with proper naming
+                    const targetPath = this.pathUtils.getRecordingSegmentPath(cameraId, date, hour, minute);
 
                     try {
                         await fs.move(filePath, targetPath, { overwrite: true });
-                        logger.debug(`Moved old segment: ${file} to ${targetPath}`);
-                    } catch (moveError) {
-                        logger.error(`Failed to move segment ${file}:`, moveError);
+                        await this.updateRecordingPlaylist(cameraId, date, hour);
+                        logger.debug(`Moved segment ${file} to recordings for camera ${cameraId}`);
+                    } catch (error) {
+                        logger.error(`Failed to move segment ${file} for camera ${cameraId}:`, error);
                     }
                 }
             }
         } catch (error) {
-            logger.error(`Error moving old segments for camera ${cameraId}:`, error);
+            logger.error(`Error moving segments for camera ${cameraId}:`, error);
+        }
+    }
+
+    // Update recording playlist for specific hour
+    async updateRecordingPlaylist(cameraId, date, hour) {
+        try {
+            const recordingDir = this.pathUtils.getRecordingsDir(cameraId, date, hour);
+            const playlistPath = this.pathUtils.getRecordingPlaylistPath(cameraId, date, hour);
+            
+            const files = await fs.readdir(recordingDir);
+            const segments = files
+                .filter(f => f.endsWith('.ts'))
+                .sort((a, b) => {
+                    const aMin = parseInt(a.split('.')[0]);
+                    const bMin = parseInt(b.split('.')[0]);
+                    return aMin - bMin;
+                });
+
+            let playlist = '#EXTM3U\n';
+            playlist += '#EXT-X-VERSION:3\n';
+            playlist += '#EXT-X-TARGETDURATION:60\n';
+            playlist += '#EXT-X-MEDIA-SEQUENCE:0\n\n';
+
+            for (const segment of segments) {
+                playlist += '#EXTINF:60.0,\n';
+                playlist += segment + '\n';
+            }
+
+            await fs.writeFile(playlistPath, playlist);
+            logger.debug(`Updated recording playlist for camera ${cameraId} at ${date}/${hour}`);
+        } catch (error) {
+            logger.error(`Failed to update recording playlist for camera ${cameraId}:`, error);
         }
     }
 
@@ -319,7 +402,7 @@ class StreamManager {
             
             // Only log if message has actual visible content (not just whitespace, newlines, or empty)
             if (message && message.length > 0 && message.replace(/\s/g, '').length > 0) {
-                logger.info(`FFmpeg stdout [${streamKey}]:`, message);
+                logger.info(`FFmpeg stdout [${streamKey}]: ${message}`);
             }
         });
 
@@ -331,18 +414,18 @@ class StreamManager {
             if (message && message.length > 0 && message.replace(/\s/g, '').length > 0) {
                 // Enhanced logging with different levels based on content
                 if (message.includes('Error') || message.includes('Failed') || message.includes('Connection refused')) {
-                    logger.error(`🔴 FFmpeg ERROR [${streamKey}]:`, message);
+                    logger.error(`🔴 FFmpeg ERROR [${streamKey}]: ${message}`);
                 } else if (message.includes('Warning') || message.includes('timeout')) {
-                    logger.warn(`🟡 FFmpeg WARNING [${streamKey}]:`, message);
+                    logger.warn(`🟡 FFmpeg WARNING [${streamKey}]: ${message}`);
                 } else if (message.includes('Opening') || message.includes('Stream') || message.includes('Video:') || message.includes('Audio:')) {
-                    logger.info(`🔵 FFmpeg INFO [${streamKey}]:`, message);
+                    logger.info(`🔵 FFmpeg INFO [${streamKey}]: ${message}`);
                 } else {
-                    logger.debug(`⚪ FFmpeg DEBUG [${streamKey}]:`, message);
+                    logger.debug(`⚪ FFmpeg DEBUG [${streamKey}]: ${message}`);
                 }
                 
                 // Look for specific error patterns with detailed logging
                 if (message.includes('Connection refused') || message.includes('Network is unreachable')) {
-                    logger.error(`🚨 NETWORK ERROR for ${streamKey}: Cannot reach camera at ${this.getRtspUrl(cameraId).replace(/:.*@/, ':***@')}`);
+                    logger.error(`🚨 NETWORK ERROR for ${streamKey}: Cannot reach camera at ${this.getRtspUrl(cameraId).replace(/:[^:@]+@/, ':***@')}`);
                     this.updateStreamStatus(cameraId, 'network_error');
                 } else if (message.includes('Invalid data found') || message.includes('No such file or directory')) {
                     logger.error(`🚨 STREAM ERROR for ${streamKey}: Invalid RTSP stream or wrong URL format`);
@@ -394,7 +477,7 @@ class StreamManager {
             this.updateStreamStatus(cameraId, 'error');
             
             if (config.autoRestart) {
-                logger.info(`�� Scheduling restart after spawn error for ${streamKey}`);
+                logger.info(`🔄 Scheduling restart after spawn error for ${streamKey}`);
                 this.scheduleRestart(cameraId);
             }
         });
@@ -404,6 +487,7 @@ class StreamManager {
             if (process.pid && !process.killed) {
                 this.updateStreamStatus(cameraId, 'running');
                 this.resetRestartAttempts(cameraId);
+                logger.info(`✅ FFmpeg process ${streamKey} is running with PID ${process.pid}`);
             }
         }, 15000); // Increased from 5 seconds to 15 seconds for transcoding startup
     }
@@ -568,7 +652,7 @@ class StreamManager {
     }
 
     getRtspUrl(cameraId) {
-        return `rtsp://${config.rtspUser}:${config.rtspPassword}@${config.rtspHost}:${config.rtspPort}/Streaming/Channels/${cameraId}`;
+        return config.getRtspUrl(cameraId);
     }
 }
 

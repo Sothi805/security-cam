@@ -220,6 +220,7 @@ class CCTVStreamingApp {
         logger.info('🎬 Initializing streaming system');
         
         try {
+            await streamManager.init();
             await streamManager.initializeStreams();
             logger.info('✅ Streaming system initialized');
         } catch (error) {

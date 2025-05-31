@@ -6,13 +6,59 @@ const { logger } = require('./logger');
 
 class PathUtils {
     constructor() {
-        // Ensure base HLS directory exists
-        this.ensureHLSDirectory();
+        this.init();
     }
 
-    // Ensure HLS directory structure exists
-    async ensureHLSDirectory() {
-        await fs.ensureDir(config.hlsPath);
+    async init() {
+        await this.ensureBaseDirectories();
+    }
+
+    // Ensure all base directories exist
+    async ensureBaseDirectories() {
+        for (const cameraId of config.cameraIds) {
+            // Ensure live directory
+            await fs.ensureDir(path.join(config.hlsPath, cameraId.toString(), 'live'));
+            
+            // Ensure recordings base directory
+            await fs.ensureDir(path.join(config.hlsPath, cameraId.toString(), 'recordings'));
+        }
+    }
+
+    // Get live directory path for a camera
+    getLiveDir(cameraId) {
+        return path.join(config.hlsPath, cameraId.toString(), 'live');
+    }
+
+    // Get recordings directory path for a camera and date
+    getRecordingsDir(cameraId, date, hour) {
+        return path.join(config.hlsPath, cameraId.toString(), 'recordings', date, hour);
+    }
+
+    // Ensure recording directory exists for specific date and hour
+    async ensureRecordingDir(cameraId, date, hour) {
+        const recordingDir = this.getRecordingsDir(cameraId, date, hour);
+        await fs.ensureDir(recordingDir);
+        return recordingDir;
+    }
+
+    // Get live segment path
+    getLiveSegmentPath(cameraId, segmentNumber) {
+        return path.join(this.getLiveDir(cameraId), `segment${segmentNumber}.ts`);
+    }
+
+    // Get recording segment path
+    getRecordingSegmentPath(cameraId, date, hour, minute) {
+        return path.join(this.getRecordingsDir(cameraId, date, hour), `${minute.toString().padStart(2, '0')}.ts`);
+    }
+
+    // Get live playlist path
+    getLivePlaylistPath(cameraId) {
+        return path.join(this.getLiveDir(cameraId), 'live.m3u8');
+    }
+
+    // Get recording playlist path
+    getRecordingPlaylistPath(cameraId, date, hour) {
+        return path.join(this.getRecordingsDir(cameraId, date, hour), 'playlist.m3u8');
     }
 
     // Get live stream path (current hour)
@@ -444,4 +490,6 @@ class PathUtils {
     }
 }
 
-module.exports = new PathUtils(); 
+module.exports = {
+    PathUtils
+}; 

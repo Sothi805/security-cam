@@ -58,12 +58,6 @@ class Config {
         this.quotaAction = process.env.QUOTA_ACTION || 'delete-oldest';
         this.storageCheckInterval = parseInt(process.env.STORAGE_CHECK_INTERVAL) || 15;
 
-        this.paths = {
-            hls: path.join(__dirname, '..', 'hls'),
-            logs: path.join(__dirname, '..', 'logs'),
-            public: path.join(__dirname, '..', 'public')
-        };
-
         this.hlsOptions = {
             time: 2,
             listSize: 900,
@@ -106,6 +100,59 @@ class Config {
         
         fs.ensureDirSync(this.logsPath);
         console.log(`📁 Created logs directory: ${this.logsPath}`);
+
+        // Set up paths object for easy access
+        this.paths = {
+            hls: this.hlsPath,
+            logs: this.logsPath,
+            public: this.publicPath
+        };
+
+        // Create camera directories with proper structure
+        if (this.cameraIds && this.cameraIds.length > 0) {
+            for (const cameraId of this.cameraIds) {
+                // Camera base directory
+                const cameraDir = path.join(this.hlsPath, cameraId.toString());
+                fs.ensureDirSync(cameraDir);
+                console.log(`📁 Created camera directory: ${cameraDir}`);
+
+                // Live directory structure
+                const liveDir = path.join(cameraDir, 'live');
+                fs.ensureDirSync(liveDir);
+                console.log(`📁 Created live directory: ${liveDir}`);
+
+                // Recordings directory structure
+                const recordingsDir = path.join(cameraDir, 'recordings');
+                fs.ensureDirSync(recordingsDir);
+                console.log(`📁 Created recordings directory: ${recordingsDir}`);
+
+                // Current date directory
+                const currentDate = moment().format('YYYY-MM-DD');
+                const dateDir = path.join(recordingsDir, currentDate);
+                fs.ensureDirSync(dateDir);
+                console.log(`📁 Created date directory: ${dateDir}`);
+
+                // Current hour directory
+                const currentHour = moment().format('HH');
+                const hourDir = path.join(dateDir, currentHour);
+                fs.ensureDirSync(hourDir);
+                console.log(`📁 Created hour directory: ${hourDir}`);
+            }
+        }
+
+        // Remove any stray directories at root level
+        try {
+            const rootDirs = fs.readdirSync(this.hlsPath);
+            for (const dir of rootDirs) {
+                const fullPath = path.join(this.hlsPath, dir);
+                if (dir === 'live' || dir === 'recordings') {
+                    fs.removeSync(fullPath);
+                    console.log(`🗑️ Removed stray directory: ${fullPath}`);
+                }
+            }
+        } catch (error) {
+            console.error('Error cleaning up stray directories:', error);
+        }
     }
 
     // Path generators for new folder structure: hls/{CAMERA_ID}/{YYYY-MM-DD}/{HH-mm}-live.m3u8
@@ -133,8 +180,9 @@ class Config {
 
     // RTSP URL generator
     getRtspUrl(cameraId) {
-        // URL encode the password to handle special characters like @ symbol
+        // URL encode the password to handle special characters
         const encodedPassword = encodeURIComponent(this.rtspPassword);
+        // Hikvision format: /Streaming/Channels/{id}
         return `rtsp://${this.rtspUser}:${encodedPassword}@${this.rtspHost}:${this.rtspPort}/Streaming/Channels/${cameraId}`;
     }
 

@@ -29,7 +29,7 @@ class Config {
         // Stream settings
         this.fps = parseInt(process.env.FPS) || 15;
         this.retentionDays = this.nodeEnv === 'development' ? 
-            parseInt(process.env.RETENTION_DAYS_DEV) || 1 :
+            parseInt(process.env.RETENTION_DAYS) || 1 :
             parseInt(process.env.RETENTION_DAYS) || 30;
         
         // FFmpeg settings
@@ -43,23 +43,6 @@ class Config {
         this.autoRestart = process.env.AUTO_RESTART === 'true';
         this.debugMode = process.env.DEBUG_MODE === 'true';
         this.streamTimeout = parseInt(process.env.STREAM_TIMEOUT) || 30000;
-
-        // Retention settings
-        this.minMotionRetentionDays = parseInt(process.env.MIN_MOTION_RETENTION_DAYS) || 7;
-        this.maxStoragePerCamera = parseInt(process.env.MAX_STORAGE_PER_CAMERA) || 50;
-        this.keepMotionEvents = process.env.KEEP_MOTION_EVENTS === 'true';
-        this.quotaAction = process.env.QUOTA_ACTION || 'delete-oldest';
-        this.storageCheckInterval = parseInt(process.env.STORAGE_CHECK_INTERVAL) || 15;
-
-        this.hlsOptions = {
-            time: 2,
-            listSize: 900,
-            flags: 'delete_segments+append_list+discont_start+split_by_time',
-            segmentType: 'mpegts',
-            initTime: 2,
-            allowCache: 0,
-            baseDir: 'live'
-        };
     }
 
     validateConfig() {
@@ -200,10 +183,10 @@ class Config {
 
     // RTSP URL generator for Hikvision cameras
     getRtspUrl(cameraId) {
-        // URL encode the password to handle special characters
+        // URL encode the password to handle special characters (@)
         const encodedPassword = encodeURIComponent(this.rtspPassword);
-        // Hikvision format: /Streaming/Channels/{id}01 (main stream)
-        return `rtsp://${this.rtspUser}:${encodedPassword}@${this.rtspHost}:${this.rtspPort}/Streaming/Channels/${cameraId}01`;
+        // Correct Hikvision format: /Streaming/Channels/{id} (NOT {id}01)
+        return `rtsp://${this.rtspUser}:${encodedPassword}@${this.rtspHost}:${this.rtspPort}/Streaming/Channels/${cameraId}`;
     }
 
     // Live stream URL (new format)
@@ -285,19 +268,14 @@ class Config {
                 cameras: this.cameraIds
             },
             retention: `${this.retentionDays || 1} days`,
-            resolution: '640x360@15fps',
+            quality: 'Native (no re-encoding)',
             fps: this.fps || 15,
             autoRestart: this.autoRestart || false,
             paths: {
                 hls: this.hlsPath || './hls',
                 logs: this.logsPath || './logs',
                 public: this.publicPath || './public'
-            },
-            minMotionRetentionDays: this.minMotionRetentionDays || 7,
-            maxStoragePerCamera: this.maxStoragePerCamera || 50,
-            keepMotionEvents: this.keepMotionEvents || false,
-            quotaAction: this.quotaAction || 'delete-oldest',
-            storageCheckInterval: this.storageCheckInterval || 15
+            }
         };
     }
 }

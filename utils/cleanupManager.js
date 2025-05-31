@@ -83,6 +83,7 @@ class CleanupManager {
 
     // Clean up segments for a specific camera
     async cleanupCamera(cameraId) {
+        const cameraPath = path.join(config.hlsPath, cameraId.toString());
         const stats = {
             dirsChecked: 0,
             filesDeleted: 0,
@@ -90,65 +91,85 @@ class CleanupManager {
             bytesFreed: 0
         };
 
-        try {
-            const cameraDir = config.getCameraDirectory(cameraId);
-            
-            if (!await fs.pathExists(cameraDir)) {
-                return stats;
+        if (!await fs.pathExists(cameraPath)) {
+            return stats;
+        }
+
+        // Only process recordings directory, not live directory
+        const recordingsPath = path.join(cameraPath, 'recordings');
+        if (!await fs.pathExists(recordingsPath)) {
+            return stats;
+        }
+
+        const items = await fs.readdir(recordingsPath);
+        
+        for (const item of items) {
+            // Skip non-date directories like 'live' or 'recordings'
+            if (!this.isValidDateDirectory(item)) {
+                logger.debug(`Skipping non-date directory: ${item}`);
+                continue;
             }
 
-            logger.debug(`Cleaning up camera ${cameraId}`);
-
-            // Get cutoff date for retention
-            const cutoffDate = moment().subtract(config.retentionDays, 'days');
+            const itemPath = path.join(recordingsPath, item);
+            const itemStats = await fs.stat(itemPath);
             
-            // Get all date directories
-            const dateDirs = await fs.readdir(cameraDir);
-            
-            for (const dateDir of dateDirs) {
-                const datePath = path.join(cameraDir, dateDir);
-                const stat = await fs.stat(datePath);
-                
-                if (!stat.isDirectory()) {
-                    continue;
-                }
-
+            if (itemStats.isDirectory()) {
                 stats.dirsChecked++;
-
-                // Check if date directory is old enough to delete
-                const dirDate = moment(dateDir, 'YYYY-MM-DD');
+                const itemDate = moment(item, 'YYYY-MM-DD');
                 
-                if (!dirDate.isValid()) {
-                    logger.warn(`Invalid date directory found: ${dateDir}`);
-                    continue;
-                }
-
-                if (dirDate.isBefore(cutoffDate)) {
-                    // Delete entire date directory
-                    const dirStats = await this.deleteDirectory(datePath);
-                    stats.filesDeleted += dirStats.filesDeleted;
-                    stats.dirsDeleted += 1;
-                    stats.bytesFreed += dirStats.bytesFreed;
+                if (itemDate.isValid()) {
+                    const daysDiff = moment().diff(itemDate, 'days');
                     
-                    logger.debug(`Deleted old date directory: ${cameraId}/${dateDir}`);
-                } else {
-                    // Clean up old segments within the date directory
-                    const segmentStats = await this.cleanupDateDirectory(cameraId, dateDir, datePath);
-                    stats.filesDeleted += segmentStats.filesDeleted;
-                    stats.bytesFreed += segmentStats.bytesFreed;
+                    if (daysDiff >= config.retentionDays) {
+                        logger.info(`Deleting old recordings for camera ${cameraId}, date: ${item}`);
+                        const deletedStats = await this.deleteRecursively(itemPath);
+                        stats.filesDeleted += deletedStats.filesDeleted;
+                        stats.dirsDeleted += deletedStats.dirsDeleted;
+                        stats.bytesFreed += deletedStats.bytesFreed;
+                    }
                 }
             }
+        }
 
-            // Clean up empty camera directory if needed
-            const remainingItems = await fs.readdir(cameraDir);
-            if (remainingItems.length === 0) {
-                await fs.remove(cameraDir);
-                stats.dirsDeleted++;
-                logger.debug(`Removed empty camera directory: ${cameraId}`);
+        return stats;
+    }
+
+    // Check if directory name is a valid date format
+    isValidDateDirectory(dirName) {
+        return moment(dirName, 'YYYY-MM-DD', true).isValid();
+    }
+
+    // Recursively delete directory and count stats
+    async deleteRecursively(dirPath) {
+        const stats = {
+            filesDeleted: 0,
+            dirsDeleted: 0,
+            bytesFreed: 0
+        };
+
+        try {
+            const items = await fs.readdir(dirPath);
+            
+            for (const item of items) {
+                const itemPath = path.join(dirPath, item);
+                const itemStats = await fs.stat(itemPath);
+                
+                if (itemStats.isDirectory()) {
+                    const subStats = await this.deleteRecursively(itemPath);
+                    stats.filesDeleted += subStats.filesDeleted;
+                    stats.dirsDeleted += subStats.dirsDeleted;
+                    stats.bytesFreed += subStats.bytesFreed;
+                } else {
+                    stats.bytesFreed += itemStats.size;
+                    await fs.remove(itemPath);
+                    stats.filesDeleted++;
+                }
             }
-
+            
+            await fs.remove(dirPath);
+            stats.dirsDeleted++;
         } catch (error) {
-            logger.error(`Failed to cleanup camera ${cameraId}:`, error);
+            logger.error(`Failed to delete directory ${dirPath}:`, error);
         }
 
         return stats;
@@ -450,10 +471,11 @@ class CleanupManager {
 
     // Check if file matches expected segment patterns
     isValidSegmentFile(filename) {
-        // Valid patterns: HH-mm-low.m3u8, HH-mm-high.m3u8, HH-mm-low_XXX.ts, HH-mm-high_XXX.ts
+        // Valid patterns: *.ts, *.m3u8 (native quality segments)
         const patterns = [
-            /^\d{2}-\d{2}-(low|high)\.m3u8$/,
-            /^\d{2}-\d{2}-(low|high)_\d{3}\.ts$/
+            /^\d{2}\.ts$/,      // Recording segments: 00.ts, 01.ts, etc.
+            /^segment\d+\.ts$/, // Live segments: segment0.ts, segment1.ts, etc.
+            /^.*\.m3u8$/        // Any playlist files
         ];
         
         return patterns.some(pattern => pattern.test(filename));

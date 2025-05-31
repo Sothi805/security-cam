@@ -107,16 +107,126 @@ class StreamManager {
         logger.debug(`   📁 ${recordingsDir}`);
     }
 
-    // Start a stream with improved dual-output ffmpeg command
+    // Get FFmpeg command for dual output (live streaming + recording)
+    getDualOutputCommand(cameraId) {
+        const cameraDir = path.join(config.paths.hls, cameraId.toString());
+        const liveDir = path.join(cameraDir, 'live');
+        const recordingsBaseDir = path.join(cameraDir, 'recordings');
+        
+        // Ensure directories exist
+        fs.ensureDirSync(liveDir);
+        fs.ensureDirSync(recordingsBaseDir);
+        
+        const date = moment().format('YYYY-MM-DD');
+        const hour = moment().format('HH');
+        const recordingsDir = path.join(recordingsBaseDir, date, hour);
+        fs.ensureDirSync(recordingsDir);
+        
+        logger.info(`Setting up native quality stream for camera ${cameraId}:`);
+        logger.info(`Live: ${liveDir}`);
+        logger.info(`Recordings: ${recordingsDir}`);
+        
+        const rtspUrl = this.getRtspUrl(cameraId);
+        
+        // Simple live stream only - native quality with copy
+        const args = [
+            '-y',  // Overwrite output files
+            '-rtsp_transport', 'tcp',
+            '-user_agent', 'SecurityCam/1.0',
+            '-i', rtspUrl,
+            
+            // Input options for stability
+            '-fflags', '+genpts',
+            '-avoid_negative_ts', 'make_zero',
+            '-max_delay', '5000000',
+            '-rtbufsize', '100M',
+            '-stimeout', '20000000',
+            '-timeout', '20000000',
+            
+            // Native quality - just copy streams
+            '-c', 'copy',
+            
+            // HLS output for live streaming
+            '-f', 'hls',
+            '-hls_time', '2',
+            '-hls_list_size', '3',
+            '-hls_flags', 'delete_segments+append_list+omit_endlist',
+            '-hls_segment_type', 'mpegts',
+            '-hls_allow_cache', '0',
+            '-hls_segment_filename', path.join(liveDir, 'segment%d.ts'),
+            path.join(liveDir, 'live.m3u8')
+        ];
+
+        return [config.ffmpegPath, ...args];
+    }
+
+    // Start separate recording process
+    async startRecordingProcess(cameraId) {
+        try {
+            const cameraDir = path.join(config.paths.hls, cameraId.toString());
+            const recordingsBaseDir = path.join(cameraDir, 'recordings');
+            
+            const date = moment().format('YYYY-MM-DD');
+            const hour = moment().format('HH');
+            const recordingsDir = path.join(recordingsBaseDir, date, hour);
+            fs.ensureDirSync(recordingsDir);
+            
+            const rtspUrl = this.getRtspUrl(cameraId);
+            
+            // Recording process - native quality
+            const recordingArgs = [
+                '-y',
+                '-rtsp_transport', 'tcp',
+                '-user_agent', 'SecurityCam/1.0',
+                '-i', rtspUrl,
+                
+                '-fflags', '+genpts',
+                '-avoid_negative_ts', 'make_zero',
+                '-max_delay', '5000000',
+                '-rtbufsize', '100M',
+                '-stimeout', '20000000',
+                '-timeout', '20000000',
+                
+                // Native quality - copy
+                '-c', 'copy',
+                
+                // Recording HLS output
+                '-f', 'hls',
+                '-hls_time', '60',
+                '-hls_list_size', '0',
+                '-hls_flags', 'append_list+split_by_time',
+                '-hls_segment_type', 'mpegts',
+                '-strftime', '1',
+                '-hls_segment_filename', path.join(recordingsDir, '%M.ts'),
+                path.join(recordingsDir, 'playlist.m3u8')
+            ];
+
+            const recordingProcess = spawn(config.ffmpegPath, recordingArgs, {
+                stdio: ['ignore', 'pipe', 'pipe'],
+                detached: false,
+                windowsHide: true
+            });
+
+            if (recordingProcess.pid) {
+                this.activeStreams.set(`${cameraId}-recording`, recordingProcess);
+                this.setupProcessHandlers(recordingProcess, cameraId, 'recording');
+                logger.info(`✅ Started recording process for camera ${cameraId} (PID: ${recordingProcess.pid})`);
+            }
+        } catch (error) {
+            logger.error(`Failed to start recording process for camera ${cameraId}:`, error);
+        }
+    }
+
+    // Start stream for a camera (simplified single process)
     async startStream(cameraId) {
         try {
-            // Stop existing stream if running
+            // Stop existing streams if running
             await this.stopStream(cameraId);
             
             // Ensure directories exist
             await this.ensureCameraDirectories(cameraId);
             
-            // Get FFmpeg command for dual output (live streaming + recording)
+            // Get FFmpeg command for live stream only
             const ffmpegCommand = this.getDualOutputCommand(cameraId);
             
             // Mask sensitive information in logs
@@ -129,10 +239,10 @@ class StreamManager {
                 });
             };
             
-            logger.info(`Starting FFmpeg process for camera ${cameraId}:`);
+            logger.info(`Starting FFmpeg live stream for camera ${cameraId}:`);
             logger.info(`Command: ${maskCommand(ffmpegCommand).join(' ')}`);
             
-            // Start single FFmpeg process with dual outputs
+            // Start live stream process
             const [ffmpegPath, ...args] = ffmpegCommand;
             
             const ffmpegProcess = spawn(ffmpegPath, args, {
@@ -149,9 +259,15 @@ class StreamManager {
             this.activeStreams.set(cameraId, ffmpegProcess);
 
             // Setup process handlers
-            this.setupProcessHandlers(ffmpegProcess, cameraId, 'dual');
+            this.setupProcessHandlers(ffmpegProcess, cameraId, 'live');
             
-            logger.info(`✅ Started dual-output stream for camera ${cameraId} (PID: ${ffmpegProcess.pid})`);
+            logger.info(`✅ Started live stream for camera ${cameraId} (PID: ${ffmpegProcess.pid})`);
+            
+            // Start separate recording process
+            setTimeout(() => {
+                this.startRecordingProcess(cameraId);
+            }, 3000); // Start recording 3 seconds after live stream
+            
             this.updateStreamStatus(cameraId, 'running');
             
         } catch (error) {
@@ -165,101 +281,51 @@ class StreamManager {
         }
     }
 
-    // Get FFmpeg command for dual output (live streaming + recording)
-    getDualOutputCommand(cameraId) {
-        const cameraDir = path.join(config.paths.hls, cameraId.toString());
-        const liveDir = path.join(cameraDir, 'live');
-        const recordingsBaseDir = path.join(cameraDir, 'recordings');
-        
-        // Ensure directories exist
-        fs.ensureDirSync(liveDir);
-        fs.ensureDirSync(recordingsBaseDir);
-        
-        const date = moment().format('YYYY-MM-DD');
-        const hour = moment().format('HH');
-        const recordingsDir = path.join(recordingsBaseDir, date, hour);
-        fs.ensureDirSync(recordingsDir);
-        
-        logger.info(`Setting up stream for camera ${cameraId}:`);
-        logger.info(`Live: ${liveDir}`);
-        logger.info(`Recordings: ${recordingsDir}`);
-        
-        const rtspUrl = this.getRtspUrl(cameraId);
-        
-        // Single output with tee to duplicate streams - more reliable than dual outputs
-        const args = [
-            '-y',  // Overwrite output files
-            '-rtsp_transport', 'tcp',
-            '-user_agent', 'SecurityCam/1.0',
-            '-i', rtspUrl,
-            
-            // Input options for stability with Hikvision cameras
-            '-fflags', '+genpts+discardcorrupt',
-            '-avoid_negative_ts', 'make_zero',
-            '-max_delay', '5000000',
-            '-reorder_queue_size', '10',
-            '-rtbufsize', '100M',
-            '-stimeout', '20000000',
-            '-timeout', '20000000',
-            
-            // Video encoding settings - optimized for Hikvision
-            '-c:v', 'libx264',
-            '-preset', 'faster',
-            '-tune', 'zerolatency',
-            '-profile:v', 'baseline',
-            '-level', '3.1',
-            '-pix_fmt', 'yuv420p',
-            '-s', '640x360',
-            '-r', '15',
-            '-b:v', '800k',
-            '-maxrate', '1000k',
-            '-bufsize', '2000k',
-            '-g', '30',
-            '-keyint_min', '15',
-            '-sc_threshold', '0',
-            '-x264-params', 'nal-hrd=cbr:force-cfr=1',
-            
-            // Audio settings
-            '-c:a', 'aac',
-            '-b:a', '64k',
-            '-ar', '22050',
-            '-ac', '1',
-            '-async', '1',
-            
-            // Use map and tee for dual output
-            '-f', 'tee',
-            '-map', '0',
-            `[f=hls:hls_time=2:hls_list_size=3:hls_flags=delete_segments+append_list+omit_endlist:hls_segment_type=mpegts:hls_allow_cache=0:hls_segment_filename=${path.join(liveDir, 'segment%d.ts').replace(/\\/g, '/')}]${path.join(liveDir, 'live.m3u8').replace(/\\/g, '/')}|[f=hls:hls_time=60:hls_list_size=0:hls_flags=append_list+split_by_time:hls_segment_type=mpegts:hls_segment_filename=${path.join(recordingsDir, '%M.ts').replace(/\\/g, '/')}]${path.join(recordingsDir, 'playlist.m3u8').replace(/\\/g, '/')}`
-        ];
-
-        return [config.ffmpegPath, ...args];
-    }
-
     // Stop a stream
     async stopStream(cameraId) {
-        if (this.activeStreams.has(cameraId)) {
-            const process = this.activeStreams.get(cameraId);
-            logger.info(`Stopping stream for camera ${cameraId}`);
-            
-            try {
-                // Send SIGTERM first for graceful shutdown
+        try {
+            // Stop live stream
+            if (this.activeStreams.has(cameraId)) {
+                const process = this.activeStreams.get(cameraId);
+                logger.info(`Stopping live stream for camera ${cameraId}`);
+                
                 if (process && !process.killed) {
                     process.kill('SIGTERM');
                     
-                    // Force kill after timeout
                     setTimeout(() => {
                         if (process && !process.killed) {
-                            logger.warn(`Force killing stream for camera ${cameraId}`);
+                            logger.warn(`Force killing live stream for camera ${cameraId}`);
                             process.kill('SIGKILL');
                         }
-                    }, 10000);
+                    }, 5000);
                 }
-            } catch (error) {
-                logger.error(`Error stopping stream for camera ${cameraId}:`, error);
+                
+                this.activeStreams.delete(cameraId);
             }
             
-            this.activeStreams.delete(cameraId);
+            // Stop recording stream
+            const recordingKey = `${cameraId}-recording`;
+            if (this.activeStreams.has(recordingKey)) {
+                const recordingProcess = this.activeStreams.get(recordingKey);
+                logger.info(`Stopping recording stream for camera ${cameraId}`);
+                
+                if (recordingProcess && !recordingProcess.killed) {
+                    recordingProcess.kill('SIGTERM');
+                    
+                    setTimeout(() => {
+                        if (recordingProcess && !recordingProcess.killed) {
+                            logger.warn(`Force killing recording stream for camera ${cameraId}`);
+                            recordingProcess.kill('SIGKILL');
+                        }
+                    }, 5000);
+                }
+                
+                this.activeStreams.delete(recordingKey);
+            }
+            
             this.updateStreamStatus(cameraId, 'stopped');
+        } catch (error) {
+            logger.error(`Error stopping streams for camera ${cameraId}:`, error);
         }
     }
 
@@ -299,16 +365,28 @@ class StreamManager {
         for (const cameraId of config.cameraIds) {
             try {
                 if (this.isStreamRunning(cameraId)) {
-                    logger.info(`🔄 Rotating stream for camera ${cameraId} to new hour`);
+                    logger.info(`🔄 Rotating recording for camera ${cameraId} to new hour`);
                     
-                    // Ensure new hour directory exists
+                    // Stop current recording process
+                    const recordingKey = `${cameraId}-recording`;
+                    if (this.activeStreams.has(recordingKey)) {
+                        const recordingProcess = this.activeStreams.get(recordingKey);
+                        if (recordingProcess && !recordingProcess.killed) {
+                            recordingProcess.kill('SIGTERM');
+                        }
+                        this.activeStreams.delete(recordingKey);
+                    }
+                    
+                    // Ensure new hour directory exists and restart recording
                     await this.ensureCameraDirectories(cameraId);
                     
-                    // Restart the stream to use new directory
-                    await this.startStream(cameraId);
+                    // Start new recording process for new hour
+                    setTimeout(() => {
+                        this.startRecordingProcess(cameraId);
+                    }, 2000);
                 }
             } catch (error) {
-                logger.error(`Failed to rotate stream for camera ${cameraId}:`, error);
+                logger.error(`Failed to rotate recording for camera ${cameraId}:`, error);
             }
         }
     }

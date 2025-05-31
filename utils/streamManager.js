@@ -122,38 +122,84 @@ class StreamManager {
         const recordingsDir = path.join(recordingsBaseDir, date, hour);
         fs.ensureDirSync(recordingsDir);
         
-        logger.info(`Setting up native quality stream for camera ${cameraId}:`);
+        logger.info(`Setting up stream for camera ${cameraId}:`);
         logger.info(`Live: ${liveDir}`);
         logger.info(`Recordings: ${recordingsDir}`);
         
         const rtspUrl = this.getRtspUrl(cameraId);
         
-        // Simple live stream only - native quality with copy
+        // Enhanced stream configuration with improved HEVC handling
         const args = [
             '-y',  // Overwrite output files
+            
+            // Input options with enhanced error recovery
             '-rtsp_transport', 'tcp',
             '-user_agent', 'SecurityCam/1.0',
+            '-stimeout', '5000000',  // 5 second timeout
+            '-reconnect', '1',
+            '-reconnect_at_eof', '1',
+            '-reconnect_streamed', '1',
+            '-reconnect_delay_max', '30',  // Maximum 30 seconds between reconnection attempts
+            
+            // Extended analysis time for better stream detection
+            '-analyzeduration', '20000000',  // 20 seconds
+            '-probesize', '20000000',
+            
+            // Input options for better stream handling
             '-i', rtspUrl,
             
-            // Input options for stability
-            '-fflags', '+genpts',
+            // Input buffer and sync options with enhanced buffering
+            '-fflags', '+genpts+discardcorrupt+nobuffer+igndts',
+            '-flags', 'low_delay',
+            '-strict', 'experimental',
             '-avoid_negative_ts', 'make_zero',
             '-max_delay', '5000000',
-            '-rtbufsize', '100M',
-            '-stimeout', '20000000',
-            '-timeout', '20000000',
+            '-rtbufsize', '512M',
             
-            // Native quality - just copy streams
-            '-c', 'copy',
+            // Force H.264 transcoding with optimized settings for HEVC source
+            '-c:v', 'libx264',
+            '-preset', 'superfast',
+            '-tune', 'zerolatency',
+            '-profile:v', 'baseline',
+            '-level', '3.0',
+            '-b:v', '2M',
+            '-maxrate', '2.5M',
+            '-bufsize', '5M',
+            '-g', '60',
+            '-keyint_min', '60',
+            '-sc_threshold', '0',
+            '-refs', '1',
+            '-trellis', '0',
+            '-subq', '1',
+            '-me_range', '16',
+            '-bf', '0',
+            '-weightp', '0',
+            '-x264opts', 'no-mbtree:no-scenecut:sync-lookahead=0',
             
-            // HLS output for live streaming
+            // Enhanced error resilience
+            '-err_detect', 'aggressive',
+            '-max_error_rate', '0.0',
+            
+            // Audio transcoding (if present)
+            '-c:a', 'aac',
+            '-b:a', '128k',
+            '-ar', '44100',
+            '-ac', '2',
+            
+            // Map all streams
+            '-map', '0',
+            
+            // Enhanced HLS output settings
             '-f', 'hls',
             '-hls_time', '2',
-            '-hls_list_size', '3',
-            '-hls_flags', 'delete_segments+append_list+omit_endlist',
+            '-hls_list_size', '6',
+            '-hls_flags', 'delete_segments+append_list+omit_endlist+independent_segments+program_date_time+temp_file',
             '-hls_segment_type', 'mpegts',
             '-hls_allow_cache', '0',
+            '-hls_playlist_type', 'event',
             '-hls_segment_filename', path.join(liveDir, 'segment%d.ts'),
+            '-strftime', '1',  // Enable strftime in segment names
+            '-hls_segment_options', 'movflags=+faststart',  // Optimize segments for fast start
             path.join(liveDir, 'live.m3u8')
         ];
 
@@ -173,28 +219,35 @@ class StreamManager {
             
             const rtspUrl = this.getRtspUrl(cameraId);
             
-            // Recording process - native quality
+            // Enhanced recording process with improved stability and HEVC handling
             const recordingArgs = [
                 '-y',
                 '-rtsp_transport', 'tcp',
                 '-user_agent', 'SecurityCam/1.0',
+                
+                // Input options
+                '-analyzeduration', '10000000',
+                '-probesize', '10000000',
                 '-i', rtspUrl,
                 
-                '-fflags', '+genpts',
+                // Input buffer and sync options
+                '-fflags', '+genpts+igndts+nobuffer',
+                '-flags', 'low_delay',
+                '-strict', 'experimental',
                 '-avoid_negative_ts', 'make_zero',
                 '-max_delay', '5000000',
-                '-rtbufsize', '100M',
-                '-stimeout', '20000000',
-                '-timeout', '20000000',
+                '-rtbufsize', '256M',
                 
-                // Native quality - copy
+                // Native quality - copy all streams
                 '-c', 'copy',
+                '-tag:v', 'hvc1',
+                '-map', '0',
                 
                 // Recording HLS output
                 '-f', 'hls',
                 '-hls_time', '60',
                 '-hls_list_size', '0',
-                '-hls_flags', 'append_list+split_by_time',
+                '-hls_flags', 'append_list+split_by_time+independent_segments',
                 '-hls_segment_type', 'mpegts',
                 '-strftime', '1',
                 '-hls_segment_filename', path.join(recordingsDir, '%M.ts'),
@@ -426,78 +479,64 @@ class StreamManager {
         }
     }
 
-    // Setup process event handlers
+    // Setup process event handlers with better error handling
     setupProcessHandlers(process, cameraId, type) {
         const streamKey = `${cameraId}-${type}`;
+        let hasError = false;
+        let lastRestartTime = 0;
+        const MIN_RESTART_INTERVAL = 10000; // 10 seconds
+        const MAX_RESTART_ATTEMPTS = 5;
+        let restartAttempts = 0;
         
         process.stdout.on('data', (data) => {
-            const rawMessage = data.toString();
-            const message = rawMessage.trim();
+            const message = data.toString().trim();
             
             // Log important messages
-            if (message && message.length > 0 && message.replace(/\s/g, '').length > 0) {
+            if (message && message.length > 0 && message.replace(/\\s/g, '').length > 0) {
                 if (message.includes('error') || message.includes('failed') || message.includes('warning')) {
                     logger.warn(`FFmpeg [${streamKey}]: ${message}`);
+                    if (message.includes('error')) {
+                        hasError = true;
+                    }
                 } else if (config.debugMode) {
                     logger.debug(`FFmpeg [${streamKey}]: ${message}`);
                 }
             }
         });
-
+        
         process.stderr.on('data', (data) => {
-            const rawMessage = data.toString();
-            const message = rawMessage.trim();
+            const message = data.toString().trim();
+            if (message.includes('error') || message.includes('failed')) {
+                logger.error(`FFmpeg [${streamKey}] Error: ${message}`);
+                hasError = true;
+            } else if (message.includes('warning')) {
+                logger.warn(`FFmpeg [${streamKey}] Warning: ${message}`);
+            } else if (config.debugMode && !message.includes('frame=')) {
+                logger.debug(`FFmpeg [${streamKey}]: ${message}`);
+            }
+        });
+        
+        process.on('exit', (code) => {
+            logger.info(`FFmpeg [${streamKey}] process exited with code ${code}`);
             
-            if (message && message.length > 0) {
-                // Filter out common non-error messages
-                if (!message.includes('frame=') && 
-                    !message.includes('fps=') && 
-                    !message.includes('size=') && 
-                    !message.includes('time=') && 
-                    !message.includes('bitrate=') && 
-                    !message.includes('speed=')) {
-                    
-                    if (message.includes('error') || message.includes('failed')) {
-                        logger.error(`FFmpeg [${streamKey}]: ${message}`);
-                    } else if (message.includes('warning')) {
-                        logger.warn(`FFmpeg [${streamKey}]: ${message}`);
-                    } else if (config.debugMode) {
-                        logger.debug(`FFmpeg [${streamKey}]: ${message}`);
-                    }
+            // Handle process restart
+            const now = Date.now();
+            if (now - lastRestartTime > MIN_RESTART_INTERVAL) {
+                if ((hasError || code !== 0) && restartAttempts < MAX_RESTART_ATTEMPTS) {
+                    restartAttempts++;
+                    lastRestartTime = now;
+                    logger.warn(`FFmpeg [${streamKey}] process exited with errors, restarting... (Attempt ${restartAttempts}/${MAX_RESTART_ATTEMPTS})`);
+                    this.startStream(cameraId);
+                } else if (restartAttempts >= MAX_RESTART_ATTEMPTS) {
+                    logger.error(`FFmpeg [${streamKey}] reached maximum restart attempts (${MAX_RESTART_ATTEMPTS}). Manual intervention required.`);
                 }
             }
         });
-
-        process.on('close', (code) => {
-            if (code !== 0) {
-                logger.error(`FFmpeg process [${streamKey}] exited with code ${code}`);
-                this.updateStreamStatus(cameraId, 'error');
-                
-                if (config.autoRestart && this.getRestartAttempts(cameraId) < 5) {
-                    this.scheduleRestart(cameraId);
-                }
-            } else {
-                logger.info(`FFmpeg process [${streamKey}] ended normally`);
-            }
+        
+        process.on('error', (err) => {
+            logger.error(`FFmpeg [${streamKey}] process error:`, err);
+            hasError = true;
         });
-
-        process.on('error', (error) => {
-            logger.error(`FFmpeg process [${streamKey}] error:`, error);
-            this.updateStreamStatus(cameraId, 'error');
-            
-            if (config.autoRestart) {
-                this.scheduleRestart(cameraId);
-            }
-        });
-
-        // Update status to running when process starts successfully
-        setTimeout(() => {
-            if (process && !process.killed) {
-                this.updateStreamStatus(cameraId, 'running');
-                this.resetRestartAttempts(cameraId);
-                logger.info(`✅ Stream for camera ${cameraId} is running (PID: ${process.pid})`);
-            }
-        }, 5000);
     }
 
     // Schedule restart with exponential backoff
@@ -569,43 +608,83 @@ class StreamManager {
     }
 
     async checkStreamHealth() {
-        const health = {};
+        logger.debug('Checking stream health for all cameras...');
         
-        for (const cameraId of config.cameraIds) {
+        for (const [cameraId, process] of this.activeStreams.entries()) {
             try {
-                const streamHealth = await this.pathUtils.getStreamHealth(cameraId);
-                health[cameraId] = streamHealth;
+                const status = await this.checkStreamFile(cameraId);
+                const currentStatus = this.getStreamStatus(cameraId);
+                
+                if (!status.healthy && currentStatus === 'running') {
+                    logger.warn(`Stream health check failed for camera ${cameraId}:`, status.reason);
+                    
+                    // Check if process is actually running
+                    if (process && !process.killed) {
+                        const attempts = this.getRestartAttempts(cameraId);
+                        
+                        if (attempts < 3) {
+                            logger.info(`Attempting to restart stream for camera ${cameraId} (attempt ${attempts + 1})`);
+                            await this.restartStream(cameraId);
+                        } else {
+                            logger.error(`Stream for camera ${cameraId} failed after ${attempts} restart attempts`);
+                            this.updateStreamStatus(cameraId, 'failed');
+                            // Notify any monitoring system here
+                        }
+                    }
+                } else if (status.healthy && currentStatus !== 'running') {
+                    logger.info(`Stream recovered for camera ${cameraId}`);
+                    this.updateStreamStatus(cameraId, 'running');
+                    this.resetRestartAttempts(cameraId);
+                }
             } catch (error) {
-                health[cameraId] = {
-                    healthy: false,
-                    error: error.message,
-                    lastCheck: moment().toISOString()
-                };
+                logger.error(`Error checking stream health for camera ${cameraId}:`, error);
             }
         }
-        
-        return health;
     }
 
     async checkStreamFile(cameraId) {
+        const liveDir = this.getLiveDirectory(cameraId);
+        const m3u8Path = path.join(liveDir, 'live.m3u8');
+        
         try {
-            const livePlaylist = path.join(config.paths.hls, cameraId.toString(), 'live', 'live.m3u8');
-            
-            if (!await fs.pathExists(livePlaylist)) {
-                return { exists: false, error: 'Live playlist not found' };
+            // Check if playlist exists
+            if (!await fs.pathExists(m3u8Path)) {
+                return { healthy: false, reason: 'Playlist file missing' };
             }
             
-            const stats = await fs.stat(livePlaylist);
-            const age = moment().diff(moment(stats.mtime), 'seconds');
+            // Read playlist file
+            const content = await fs.readFile(m3u8Path, 'utf8');
+            const segments = content.match(/segment\d+\.ts/g) || [];
             
-            return {
-                exists: true,
-                lastModified: stats.mtime,
-                ageSeconds: age,
-                stale: age > 30 // Consider stale if older than 30 seconds
-            };
+            if (segments.length === 0) {
+                return { healthy: false, reason: 'No segments in playlist' };
+            }
+            
+            // Check latest segment
+            const latestSegment = segments[segments.length - 1];
+            const segmentPath = path.join(liveDir, latestSegment);
+            
+            if (!await fs.pathExists(segmentPath)) {
+                return { healthy: false, reason: 'Latest segment missing' };
+            }
+            
+            const stats = await fs.stat(segmentPath);
+            const age = Date.now() - stats.mtimeMs;
+            
+            // If latest segment is too old (more than 10 seconds)
+            if (age > 10000) {
+                return { healthy: false, reason: 'Segments not updating' };
+            }
+            
+            // Check segment size
+            if (stats.size < 1000) {  // Less than 1KB
+                return { healthy: false, reason: 'Segment too small' };
+            }
+            
+            return { healthy: true };
         } catch (error) {
-            return { exists: false, error: error.message };
+            logger.error(`Error checking stream file for camera ${cameraId}:`, error);
+            return { healthy: false, reason: `File check error: ${error.message}` };
         }
     }
 
@@ -651,11 +730,11 @@ class StreamManager {
         return this.stopAllStreams();
     }
 
-    // Stop a specific camera stream (missing method)
+    // Stop a specific camera stream
     async stopCameraStream(cameraId) {
         logger.info(`Stopping stream for camera ${cameraId}`);
         await this.stopStream(cameraId);
     }
 }
 
-module.exports = new StreamManager(); 
+module.exports = new StreamManager();

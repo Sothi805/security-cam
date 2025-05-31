@@ -9,6 +9,7 @@ const { getSystemMetrics, getStorageInfo, formatBytes } = require('../utils/syst
 const config = require('../utils/config');
 const { logger } = require('../utils/logger');
 const os = require('os');
+const diskusage = require('diskusage');
 
 const execAsync = promisify(exec);
 
@@ -20,7 +21,6 @@ async function getCpuUsage() {
             total: Object.values(cpu.times).reduce((acc, tv) => acc + tv, 0)
         }));
 
-        // Wait for 100ms to get a good measurement
         await new Promise(resolve => setTimeout(resolve, 100));
 
         const endMeasure = os.cpus().map(cpu => ({
@@ -36,7 +36,6 @@ async function getCpuUsage() {
             return Math.max(0, Math.min(100, usagePercent));
         });
 
-        // Return average CPU usage across all cores
         return cpuUsage.reduce((acc, usage) => acc + usage, 0) / cpuUsage.length;
     } catch (error) {
         logger.warn('Failed to get CPU usage:', error.message);
@@ -46,56 +45,51 @@ async function getCpuUsage() {
 
 // Helper function to get memory usage
 function getMemoryUsage() {
-    try {
-        const totalMem = os.totalmem();
-        const freeMem = os.freemem();
-        const usedMem = totalMem - freeMem;
-        return Math.round((usedMem / totalMem) * 100);
-    } catch (error) {
-        logger.warn('Failed to get memory usage:', error.message);
-        return 0;
-    }
+    const total = os.totalmem();
+    const free = os.freemem();
+    const used = total - free;
+    const usagePercent = (used / total) * 100;
+    
+    return {
+        total: formatBytes(total),
+        used: formatBytes(used),
+        free: formatBytes(free),
+        percent: Math.round(usagePercent)
+    };
 }
 
 // Helper function to get disk usage
 async function getDiskUsage() {
     try {
-        const hlsPath = path.resolve(config.hlsPath);
+        const rootPath = path.parse(process.cwd()).root;
+        const usage = await diskusage.check(rootPath);
+        const total = usage.total;
+        const free = usage.free;
+        const used = total - free;
+        const usagePercent = (used / total) * 100;
         
-        if (process.platform === 'win32') {
-            const drive = path.parse(hlsPath).root;
-            const result = await execAsync(`wmic logicaldisk where caption="${drive.replace('\\', '')}" get size,freespace /value`);
-            const freeMatch = result.stdout.match(/FreeSpace=(\d+)/);
-            const sizeMatch = result.stdout.match(/Size=(\d+)/);
-            
-            if (freeMatch && sizeMatch) {
-                const free = parseInt(freeMatch[1]);
-                const total = parseInt(sizeMatch[1]);
-                const used = total - free;
-                return Math.round((used / total) * 100);
-            }
-        } else {
-            const result = await execAsync(`df "${hlsPath}" | tail -1 | awk '{print $5}' | sed 's/%//'`);
-            return parseInt(result.stdout.trim()) || 0;
-        }
-        
-        return 0;
+        return {
+            total: formatBytes(total),
+            used: formatBytes(used),
+            free: formatBytes(free),
+            percent: Math.round(usagePercent)
+        };
     } catch (error) {
         logger.warn('Failed to get disk usage:', error.message);
-        return 0;
+        return {
+            total: '0',
+            used: '0',
+            free: '0',
+            percent: 0
+        };
     }
 }
 
 // Helper function to count FFmpeg processes
 async function countFFmpegProcesses() {
     try {
-        if (process.platform === 'win32') {
-            const result = await execAsync('tasklist /FI "IMAGENAME eq ffmpeg.exe" /FO CSV | find /C "ffmpeg.exe"');
-            return parseInt(result.stdout.trim()) || 0;
-        } else {
-            const result = await execAsync('pgrep -c ffmpeg || echo 0');
-            return parseInt(result.stdout.trim()) || 0;
-        }
+        const { stdout } = await execAsync('tasklist | find /i "ffmpeg" /c');
+        return parseInt(stdout.trim()) || 0;
     } catch (error) {
         logger.warn('Failed to count FFmpeg processes:', error.message);
         return 0;
@@ -117,10 +111,16 @@ router.get('/metrics', async (req, res) => {
         const memoryUsage = getMemoryUsage();
 
         const metrics = {
-            cpu: Math.round(cpuUsage),
+            cpu: {
+                percent: Math.round(cpuUsage),
+                cores: os.cpus().length
+            },
             memory: memoryUsage,
-            disk: Math.round(diskUsage),
-            ffmpeg: ffmpegCount,
+            disk: diskUsage,
+            ffmpeg: {
+                count: ffmpegCount,
+                active: ffmpegCount > 0
+            },
             timestamp: new Date().toISOString()
         };
 

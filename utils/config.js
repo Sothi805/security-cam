@@ -183,9 +183,8 @@ class Config {
 
     // RTSP URL generator for Hikvision cameras
     getRtspUrl(cameraId) {
-        // URL encode the password to handle special characters (@)
-        const encodedPassword = encodeURIComponent(this.rtspPassword);
-        // Correct Hikvision format: /Streaming/Channels/{id} (NOT {id}01)
+        // Manually encode @ as %40 for Hikvision compatibility
+        const encodedPassword = this.rtspPassword.replace(/@/g, '%40');
         return `rtsp://${this.rtspUser}:${encodedPassword}@${this.rtspHost}:${this.rtspPort}/Streaming/Channels/${cameraId}`;
     }
 

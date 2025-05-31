@@ -757,32 +757,17 @@
       // Load system metrics
       async function loadSystemMetrics() {
         try {
-          log("Fetching system metrics...");
           const response = await fetch(`${API_BASE_URL}/api/system/metrics`);
-          log("Metrics response status:", response.status);
 
           if (!response.ok) {
-            console.warn("System metrics endpoint returned error:", response.status);
-            throw new Error("System metrics unavailable");
+            throw new Error(`Failed to load metrics: ${response.status}`);
           }
 
           const data = await response.json();
-          log("Received metrics data:", data);
-
-          return {
-            cpu: { usage: data.cpu || 0 },
-            memory: { usage: data.memory || 0 },
-            disk: { usage: data.disk || 0 },
-            processes: { ffmpeg: data.ffmpeg || 0 }
-          };
+          return data;
         } catch (error) {
           console.error("Failed to load system metrics:", error);
-          return {
-            cpu: { usage: -1 },
-            memory: { usage: -1 },
-            disk: { usage: -1 },
-            processes: { ffmpeg: -1 }
-          };
+          throw error;
         }
       }
 
@@ -798,74 +783,47 @@
 
       // Update system metrics display
       function updateSystemMetrics(data) {
-        console.log("Updating metrics display with:", data);
-
-        function formatMetric(value) {
-          if (value === -1) return "N/A";
-          return `${Math.round(value)}%`;
-        }
-
         // CPU Usage
-        const cpuValue = data.cpu?.usage ?? 0;
-        document.getElementById("cpuUsage").innerHTML = `
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <path d="M15 9H9v6h6V9zm-2 4h-2v-2h2v2zm8-2V9h-2V7c0-1.1-.9-2-2-2h-2V3h-2v2h-2V3H9v2H7c-1.1 0-2 .9-2 2v2H3v2h2v2H3v2h2v2c0 1.1.9 2 2 2h2v2h2v-2h2v2h2v-2h2c1.1 0 2-.9 2-2v-2h2v-2h-2v-2h2zm-4 6H7V7h10v10z"/>
-          </svg>
-          ${formatMetric(cpuValue)}
-        `;
+        const cpuElement = document.getElementById("cpuUsage");
+        cpuElement.textContent = `${data.cpu.percent}%`;
+        cpuElement.title = `${data.cpu.cores} cores`;
 
         // Memory Usage
-        const memValue = data.memory?.usage ?? 0;
-        document.getElementById("memoryUsage").innerHTML = `
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <path d="M15 9H9v6h6V9zm-2 4h-2v-2h2v2zM7 5h10v14H7V5zm12 0c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V7c0-1.1.9-2 2-2h14z"/>
-          </svg>
-          ${formatMetric(memValue)}
-        `;
+        const memElement = document.getElementById("memoryUsage");
+        memElement.textContent = `${data.memory.percent}%`;
+        memElement.title = `Used: ${data.memory.used} / Total: ${data.memory.total}`;
 
         // Disk Usage
-        const diskValue = data.disk?.usage ?? 0;
-        document.getElementById("diskUsage").innerHTML = `
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <path d="M20 13h-7V3H7v10H0l10 10 10-10zM7 21v2h10v-2H7z"/>
-          </svg>
-          ${formatMetric(diskValue)}
-        `;
+        const diskElement = document.getElementById("diskUsage");
+        diskElement.textContent = `${data.disk.percent}%`;
+        diskElement.title = `Used: ${data.disk.used} / Total: ${data.disk.total}`;
 
         // FFmpeg Processes
-        const processCount = data.processes?.ffmpeg ?? 0;
-        document.getElementById("ffmpegProcesses").innerHTML = `
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14z"/>
-            <path d="M7 12h2v5H7zm4-3h2v8h-2zm4-3h2v11h-2z"/>
-          </svg>
-          ${processCount}
-        `;
+        const ffmpegElement = document.getElementById("ffmpegProcesses");
+        ffmpegElement.textContent = data.ffmpeg.count;
+        ffmpegElement.title = data.ffmpeg.active
+          ? "Streams Active"
+          : "No Active Streams";
 
-        // Update status colors based on thresholds
-        if (cpuValue !== -1) updateMetricStatus("cpuUsage", cpuValue, 80, 90);
-        if (memValue !== -1)
-          updateMetricStatus("memoryUsage", memValue, 80, 90);
-        if (diskValue !== -1)
-          updateMetricStatus("diskUsage", diskValue, 80, 90);
+        // Update metrics cards styling based on thresholds
+        updateMetricCardStyle("cpuUsage", data.cpu.percent);
+        updateMetricCardStyle("memoryUsage", data.memory.percent);
+        updateMetricCardStyle("diskUsage", data.disk.percent);
       }
 
-      // Update metric status colors
-      function updateMetricStatus(
-        elementId,
-        value,
-        warningThreshold,
-        criticalThreshold
-      ) {
-        const element = document.getElementById(elementId);
-        if (!element) return;
+      // Update metric card styling based on value
+      function updateMetricCardStyle(elementId, value) {
+        const card = document.getElementById(elementId).closest(".metric-card");
 
-        element.style.color =
-          value >= criticalThreshold
-            ? "#ef4444"
-            : value >= warningThreshold
-            ? "#f59e0b"
-            : "#10b981";
+        // Remove existing status classes
+        card.classList.remove("warning", "critical");
+
+        // Add appropriate status class
+        if (value >= 90) {
+          card.classList.add("critical");
+        } else if (value >= 75) {
+          card.classList.add("warning");
+        }
       }
 
       // Update cameras grid
@@ -902,52 +860,29 @@
 
         // Initialize HLS players for all cameras
         allCameras.forEach((camera) => {
-          initializeHLSPlayer(camera);
+          initializeHLSPlayer(camera.camera_id);
         });
       }
 
       // Create camera card HTML
       function createCameraCard(camera) {
         return `
-          <div class="camera-card">
+          <div class="camera-card" id="camera-card-${camera.camera_id}">
             <div class="camera-header">
-              <div class="camera-id">Camera ${camera.camera_id}</div>
-              <div class="camera-status">
-                <div class="status-dot online"></div>
-                Active
-              </div>
+              <span class="camera-id">Camera ${camera.camera_id}</span>
+              <span class="camera-status" id="status-${camera.camera_id}">
+                <span class="status-dot"></span>
+                <span class="status-text">Connecting...</span>
+              </span>
             </div>
             
             <div class="video-container">
-              <video id="video-${camera.camera_id}" class="video-player" 
-                     muted autoplay playsinline controls>
-              </video>
-              <div class="video-overlay">LIVE</div>
-              <div id="loading-${camera.camera_id}" class="hls-loading">
-                <div class="spinner"></div>
-              </div>
-              
-              <button class="history-toggle" onclick="toggleHistory('${camera.camera_id}')">
-                <svg viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.25 2.52.77-1.28-3.52-2.09V8z"/>
-                </svg>
-              </button>
-
-              <div id="history-${camera.camera_id}" class="history-panel">
-                <h3>Recorded Footage</h3>
-                <div class="date-selector">
-                  <label>Select Date:</label>
-                  <select id="date-select-${camera.camera_id}" onchange="loadHours('${camera.camera_id}')">
-                    <option value="">Loading dates...</option>
-                  </select>
-                </div>
-                <div class="hour-grid" id="hour-grid-${camera.camera_id}">
-                  <!-- Hours will be populated dynamically -->
-                </div>
-                <div class="no-recordings" id="no-recordings-${camera.camera_id}" style="display: none;">
-                  No recordings available for selected date
-                </div>
-              </div>
+              <video
+                id="video-${camera.camera_id}"
+                class="video-player"
+                playsinline
+                tabindex="0"
+              ></video>
               
               <div class="playback-controls">
                 <button class="playback-btn" onclick="skipBackward('${camera.camera_id}')">
@@ -966,9 +901,6 @@
                   </svg>
                 </button>
                 <div class="time-display" id="time-${camera.camera_id}">00:00 / 00:00</div>
-                <button class="jump-to-live" id="jump-live-${camera.camera_id}" onclick="jumpToLive('${camera.camera_id}')">
-                  Jump to Live
-                </button>
               </div>
               
               <div class="progress-bar" id="progress-${camera.camera_id}" onclick="seek(event, '${camera.camera_id}')">
@@ -980,26 +912,62 @@
                 <span class="live-text">LIVE</span>
               </div>
             </div>
-            
+
             <div class="camera-info">
               <div class="info-grid">
                 <div class="info-item">
-                  <div class="info-label">Status</div>
-                  <div class="info-value">Streaming</div>
+                  <span class="info-label">Status</span>
+                  <span class="info-value" id="info-status-${camera.camera_id}">-</span>
                 </div>
                 <div class="info-item">
-                  <div class="info-label">Resolution</div>
-                  <div class="info-value">480p</div>
+                  <span class="info-label">Resolution</span>
+                  <span class="info-value" id="info-resolution-${camera.camera_id}">-</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Bitrate</span>
+                  <span class="info-value" id="info-bitrate-${camera.camera_id}">-</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">FPS</span>
+                  <span class="info-value" id="info-fps-${camera.camera_id}">-</span>
                 </div>
               </div>
               
               <div class="camera-actions">
                 <button class="action-btn restart" onclick="restartCamera('${camera.camera_id}')">
-                  Restart Camera
+                  <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                    <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+                  </svg>
+                  Restart Stream
                 </button>
                 <button class="action-btn fullscreen" onclick="openFullscreen('video-${camera.camera_id}')">
+                  <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                    <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
+                  </svg>
                   Fullscreen
                 </button>
+              </div>
+            </div>
+
+            <button class="history-toggle" onclick="toggleHistory('${camera.camera_id}')">
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.25 2.52.77-1.28-3.52-2.09V8z"/>
+              </svg>
+            </button>
+
+            <div id="history-${camera.camera_id}" class="history-panel">
+              <h3>Recording History</h3>
+              <div class="date-selector">
+                <label>Select Date:</label>
+                <select id="date-select-${camera.camera_id}" onchange="loadRecordingHours('${camera.camera_id}', this.value)">
+                  <option value="">Loading dates...</option>
+                </select>
+              </div>
+              <div class="hour-grid" id="hour-grid-${camera.camera_id}">
+                <!-- Hours will be populated dynamically -->
+              </div>
+              <div class="no-recordings" id="no-recordings-${camera.camera_id}" style="display: none;">
+                No recordings available for selected date
               </div>
             </div>
           </div>
@@ -1007,87 +975,212 @@
       }
 
       // Initialize HLS player for a camera
-      function initializeHLSPlayer(camera) {
-        const videoElement = document.getElementById(
-          `video-${camera.camera_id}`
-        );
-        const loadingElement = document.getElementById(
-          `loading-${camera.camera_id}`
-        );
+      function initializeHLSPlayer(cameraId) {
+        const videoElement = document.getElementById(`video-${cameraId}`);
+        const loadingElement = document.getElementById(`loading-${cameraId}`);
+        const errorElement = document.getElementById(`error-${cameraId}`);
+        const statusElement = document.getElementById(`status-${cameraId}`);
 
         if (!videoElement || !Hls.isSupported()) {
+          console.error("HLS.js not supported or video element not found");
+          if (errorElement) {
+            errorElement.textContent =
+              "HLS playback not supported in this browser";
+            errorElement.style.display = "block";
+          }
           return;
         }
 
-        videoElement.preload = "auto";
-        const hls = new Hls(HLS_CONFIG);
+        // Clear any existing player
+        if (hlsPlayers.has(cameraId)) {
+          const oldPlayer = hlsPlayers.get(cameraId);
+          oldPlayer.destroy();
+          hlsPlayers.delete(cameraId);
+        }
 
-        // Add live status checking with better time handling
-        setInterval(() => {
-          if (hls && videoElement && !videoElement.paused) {
-            const liveEdge = hls.liveSyncPosition;
-            const currentTime = videoElement.currentTime;
-            const liveIndicator = document.getElementById(
-              `live-${camera.camera_id}`
-            );
-
-            if (liveEdge && currentTime) {
-              const behind = liveEdge - currentTime;
-              if (behind > 10) {
-                liveIndicator.classList.add("behind");
-                // If we're way too far behind, force jump to live
-                if (behind > 60) {
-                  jumpToLive(camera.camera_id);
-                }
-              } else {
-                liveIndicator.classList.remove("behind");
-              }
-            }
+        // Enhanced HLS configuration with better error handling
+        const hlsConfig = {
+          debug: false,
+          enableWorker: true,
+          lowLatencyMode: true,
+          backBufferLength: 30,
+          maxBufferSize: 30 * 1000 * 1000, // 30MB max buffer
+          maxBufferLength: 30, // 30 seconds max buffer
+          maxMaxBufferLength: 60, // 60 seconds absolute max
+          startLevel: -1, // Auto quality selection
+          abrEwmaFastLive: 3,
+          abrEwmaSlowLive: 9,
+          abrBandWidthFactor: 0.9,
+          abrBandWidthUpFactor: 0.7,
+          liveSyncDurationCount: 3, // Use 3 segments for stability
+          liveMaxLatencyDurationCount: 6, // Reduced from 10 to 6
+          liveDurationInfinity: false, // Don't allow infinite duration
+          manifestLoadingTimeOut: 10000, // 10 seconds
+          manifestLoadingMaxRetry: 3,
+          manifestLoadingRetryDelay: 1000,
+          levelLoadingTimeOut: 10000,
+          levelLoadingMaxRetry: 3,
+          levelLoadingRetryDelay: 1000,
+          fragLoadingTimeOut: 10000,
+          fragLoadingMaxRetry: 3,
+          fragLoadingRetryDelay: 1000,
+          startFragPrefetch: true,
+          testBandwidth: true,
+          progressive: true,
+          // Error tracking
+          xhrSetup: function (xhr, url) {
+            xhr.addEventListener("error", function () {
+              console.warn(`XHR error for camera ${cameraId}:`, url);
+              updateStatus("Network error, attempting to reconnect...", true);
+            });
           }
-        }, 1000);
+        };
 
-        // Use the new live stream path
-        const streamUrl = `${API_BASE_URL}/hls/${camera.camera_id}/live/live.m3u8`;
-        hls.loadSource(streamUrl);
-        hls.attachMedia(videoElement);
+        const hls = new Hls(hlsConfig);
+        hlsPlayers.set(cameraId, hls);
 
-        // Store player reference
-        hlsPlayers.set(camera.camera_id, hls);
+        // Stream URL
+        const streamUrl = `${API_BASE_URL}/hls/${cameraId}/live/live.m3u8`;
 
-        // Add specific handling for live streams
-        hls.on(Hls.Events.LEVEL_LOADED, (event, data) => {
-          if (data.details.live) {
-            // Force live mode settings
-            hls.config.liveSyncDurationCount = 3;
-            hls.config.liveMaxLatencyDurationCount = 6;
-
-            // Try to start at live edge
-            const seekTarget = hls.liveSyncPosition;
-            if (seekTarget && !isNaN(seekTarget)) {
-              videoElement.currentTime = seekTarget;
-            }
+        // Helper function to update status
+        function updateStatus(message, isError = false) {
+          if (statusElement) {
+            statusElement.textContent = message;
+            statusElement.className = isError ? "status error" : "status";
+            statusElement.style.display = "block";
           }
-        });
+          if (errorElement) {
+            errorElement.textContent = isError ? message : "";
+            errorElement.style.display = isError ? "block" : "none";
+          }
+          if (loadingElement) {
+            loadingElement.style.display =
+              isError || message.includes("Loading") ? "block" : "none";
+          }
+        }
 
-        // Handle errors and recovery
+        // Error handling and recovery with better status updates
         hls.on(Hls.Events.ERROR, function (event, data) {
+          console.warn(
+            `HLS error for camera ${cameraId}:`,
+            data.type,
+            data.details
+          );
+
           if (data.fatal) {
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
-                console.log("Network error, trying to recover...");
+                console.log("Network error, attempting recovery...");
+                updateStatus("Network error, attempting to reconnect...", true);
                 hls.startLoad();
                 break;
               case Hls.ErrorTypes.MEDIA_ERROR:
-                console.log("Media error, trying to recover...");
+                console.log("Media error, attempting recovery...");
+                updateStatus("Media error, attempting to recover...", true);
                 hls.recoverMediaError();
                 break;
               default:
                 console.log("Fatal error, reloading stream...");
-                jumpToLive(camera.camera_id);
+                updateStatus("Stream error, reloading...", true);
+                initializeHLSPlayer(cameraId);
+                break;
+            }
+          } else {
+            // Non-fatal errors
+            switch (data.details) {
+              case Hls.ErrorDetails.BUFFER_STALLED_ERROR:
+                updateStatus("Stream buffering...", false);
+                break;
+              case Hls.ErrorDetails.BUFFER_FULL_ERROR:
+                updateStatus("Buffer full, adjusting playback...", false);
+                break;
+              case Hls.ErrorDetails.FRAG_LOAD_ERROR:
+                updateStatus("Fragment loading error, retrying...", true);
+                break;
+              default:
+                updateStatus(
+                  "Stream issue detected, attempting to recover...",
+                  true
+                );
                 break;
             }
           }
         });
+
+        // Monitor stream health with better status updates
+        let lastFragmentLoaded = Date.now();
+        const STALL_THRESHOLD = 10000; // 10 seconds
+        let isStalled = false;
+
+        hls.on(Hls.Events.FRAG_LOADED, () => {
+          lastFragmentLoaded = Date.now();
+          if (isStalled) {
+            isStalled = false;
+            updateStatus("Stream resumed", false);
+            setTimeout(() => updateStatus(""), 2000);
+          }
+        });
+
+        hls.on(Hls.Events.FRAG_PARSING_DATA, () => {
+          if (videoElement.readyState >= 3) {
+            // ENOUGH_DATA
+            updateStatus("");
+          }
+        });
+
+        const healthCheck = setInterval(() => {
+          const now = Date.now();
+          if (now - lastFragmentLoaded > STALL_THRESHOLD && !isStalled) {
+            isStalled = true;
+            console.warn(
+              `Stream stalled for camera ${cameraId}, attempting recovery...`
+            );
+            updateStatus("Stream stalled, attempting to recover...", true);
+            hls.startLoad();
+          }
+        }, 5000);
+
+        // Cleanup on destroy
+        hls.on(Hls.Events.DESTROYING, () => {
+          clearInterval(healthCheck);
+        });
+
+        // Load source and attach media
+        updateStatus("Loading stream...");
+        hls.loadSource(streamUrl);
+        hls.attachMedia(videoElement);
+
+        // Stream loading progress
+        hls.on(Hls.Events.MANIFEST_LOADING, () => {
+          updateStatus("Loading stream manifest...");
+        });
+
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          updateStatus("Starting playback...");
+          videoElement.play().catch(function (error) {
+            console.log("Autoplay failed:", error);
+            updateStatus("Autoplay failed. Click to play.", true);
+          });
+        });
+
+        hls.on(Hls.Events.LEVEL_LOADED, () => {
+          if (videoElement.readyState >= 3) {
+            // ENOUGH_DATA
+            updateStatus("");
+          }
+        });
+
+        // Add video element error handler
+        videoElement.addEventListener("error", function (e) {
+          console.error(`Video error for camera ${cameraId}:`, e.target.error);
+          updateStatus("Video playback error, attempting to recover...", true);
+          if (hls) {
+            hls.recoverMediaError();
+          }
+        });
+
+        // Add loading indicator
+        updateStatus("Initializing stream...");
       }
 
       // Utility functions
@@ -1182,19 +1275,20 @@
         panel.classList.toggle("open");
 
         if (panel.classList.contains("open")) {
-          loadDates(cameraId);
+          loadRecordingDates(cameraId);
         }
       }
 
-      // Load available dates for camera
-      async function loadDates(cameraId) {
+      async function loadRecordingDates(cameraId) {
         try {
           const response = await fetch(
-            `${API_BASE_URL}/streams/playback/${cameraId}`
+            `${API_BASE_URL}/api/streams/playback/${cameraId}`
           );
-          const data = await response.json();
+          if (!response.ok) throw new Error("Failed to load recording dates");
 
+          const data = await response.json();
           const select = document.getElementById(`date-select-${cameraId}`);
+
           if (data.available_dates && data.available_dates.length > 0) {
             select.innerHTML = data.available_dates
               .map(
@@ -1203,29 +1297,27 @@
               .join("");
 
             // Load hours for first date
-            loadHours(cameraId, data.available_dates[0]);
+            loadRecordingHours(cameraId, data.available_dates[0]);
           } else {
             select.innerHTML =
               '<option value="">No recordings available</option>';
+            document.getElementById(`hour-grid-${cameraId}`).innerHTML = "";
+            document.getElementById(`no-recordings-${cameraId}`).style.display =
+              "block";
           }
         } catch (error) {
-          console.error("Failed to load dates:", error);
+          console.error("Failed to load recording dates:", error);
         }
       }
 
-      // Load available hours for selected date
-      async function loadHours(cameraId, date) {
-        const dateSelect = document.getElementById(`date-select-${cameraId}`);
-        date = date || dateSelect.value;
-
-        if (!date) return;
-
+      async function loadRecordingHours(cameraId, date) {
         try {
           const response = await fetch(
-            `${API_BASE_URL}/streams/playback/${cameraId}?date=${date}`
+            `${API_BASE_URL}/api/streams/playback/${cameraId}/${date}`
           );
-          const data = await response.json();
+          if (!response.ok) throw new Error("Failed to load recording hours");
 
+          const data = await response.json();
           const hourGrid = document.getElementById(`hour-grid-${cameraId}`);
           const noRecordings = document.getElementById(
             `no-recordings-${cameraId}`
@@ -1244,11 +1336,10 @@
             noRecordings.style.display = "block";
           }
         } catch (error) {
-          console.error("Failed to load hours:", error);
+          console.error("Failed to load recording hours:", error);
         }
       }
 
-      // Generate hour selection buttons (updated for new format)
       function generateHourButtons(cameraId, date, availableHours) {
         const hours = [];
         for (let i = 0; i < 24; i++) {
@@ -1265,47 +1356,40 @@
         return hours.join("");
       }
 
-      // Update playback function for new recording structure
       async function playRecording(cameraId, date, hour) {
         try {
-          const recordingUrl = `${API_BASE_URL}/hls/${cameraId}/recordings/${date}/${hour}/playlist.m3u8`;
+          const response = await fetch(
+            `${API_BASE_URL}/api/streams/playback/${cameraId}/${date}/${hour}`
+          );
+          if (!response.ok) throw new Error("Failed to get recording URL");
+
+          const data = await response.json();
+          if (!data.stream_url) throw new Error("No recording URL available");
+
           const videoElement = document.getElementById(`video-${cameraId}`);
           const hls = hlsPlayers.get(cameraId);
 
-          // Update overlay to show recording status
-          const overlay =
-            videoElement.parentElement.querySelector(".video-overlay");
-          overlay.textContent = `RECORDED: ${formatDate(date)} ${hour.padStart(2, '0')}:00`;
-          overlay.style.backgroundColor = "#dc2626";
-
           if (hls) {
-            hls.loadSource(recordingUrl);
+            // Update status indicator
+            const statusText = document.getElementById(
+              `info-status-${cameraId}`
+            );
+            statusText.textContent = `Playing Recording (${formatDate(
+              date
+            )} ${hour}:00)`;
+
+            // Load the recording
+            hls.loadSource(data.stream_url);
             hls.on(Hls.Events.MANIFEST_PARSED, () => {
               videoElement.play();
             });
+
+            // Update live indicator
+            const liveIndicator = document.getElementById(`live-${cameraId}`);
+            liveIndicator.classList.add("behind");
           }
         } catch (error) {
           console.error("Failed to play recording:", error);
-        }
-      }
-
-      // Return to live stream
-      function returnToLive(cameraId) {
-        const streamUrl = `${API_BASE_URL}/hls/${cameraId}/live/live.m3u8`;
-        const videoElement = document.getElementById(`video-${cameraId}`);
-        const hls = hlsPlayers.get(cameraId);
-
-        // Update overlay
-        const overlay =
-          videoElement.parentElement.querySelector(".video-overlay");
-        overlay.textContent = "LIVE";
-        overlay.style.backgroundColor = "rgba(0, 0, 0, 0.8)";
-
-        if (hls) {
-          hls.loadSource(streamUrl);
-          hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            videoElement.play();
-          });
         }
       }
 
@@ -1319,133 +1403,115 @@
         });
       }
 
-      // Performance configuration
-      const HLS_CONFIG = {
-        maxBufferSize: 30 * 1000 * 1000, // 30MB max buffer
-        maxBufferLength: 30, // 30 seconds max buffer
-        maxMaxBufferLength: 60, // 60 seconds absolute max
-        backBufferLength: 30, // Keep 30 seconds backward buffer for live
-        enableWorker: true,
-        lowLatencyMode: true,
-        liveSyncDurationCount: 3, // Use 3 segments for stability
-        liveMaxLatencyDurationCount: 6, // Reduced from 10 to 6
-        liveDurationInfinity: false, // Don't allow infinite duration
-        maxFragLookUpTolerance: 0.5,
-        startLevel: -1, // Auto quality selection
-        abrEwmaFastLive: 3,
-        abrEwmaSlowLive: 9,
-        abrBandWidthFactor: 0.9,
-        abrBandWidthUpFactor: 0.7,
-        maxStarvationDelay: 4,
-        maxLoadingDelay: 4,
-        fragLoadingTimeOut: 20000,
-        manifestLoadingTimeOut: 20000,
-        levelLoadingTimeOut: 20000,
-        debug: false
-      };
+      // Playback Controls
+      function togglePlay(cameraId) {
+        const video = document.getElementById(`video-${cameraId}`);
+        const playBtn = document.getElementById(`play-${cameraId}`);
 
-      // Track active players for cleanup
-      const activePlayers = new Map();
-
-      function initializePlayer(videoElement, streamUrl) {
-        if (activePlayers.has(videoElement)) {
-          const oldPlayer = activePlayers.get(videoElement);
-          oldPlayer.destroy();
-          activePlayers.delete(videoElement);
-        }
-
-        if (Hls.isSupported()) {
-          const hls = new Hls(HLS_CONFIG);
-
-          // Simpler latency monitoring
-          let latencyHandler = setInterval(() => {
-            if (hls && videoElement && !videoElement.paused) {
-              if (hls.latency > 15) {
-                // If latency exceeds 15 seconds
-                videoElement.playbackRate = 1.25; // Speed up slightly
-              } else {
-                videoElement.playbackRate = 1.0; // Normal speed
-              }
-            }
-          }, 2000);
-
-          hls.loadSource(streamUrl);
-          hls.attachMedia(videoElement);
-
-          // Store player reference for cleanup
-          activePlayers.set(videoElement, hls);
-
-          hls.on(Hls.Events.MANIFEST_PARSED, function () {
-            videoElement.play().catch(function (error) {
-              console.log("Play failed:", error);
-            });
-          });
-
-          // Error handling with recovery
-          hls.on(Hls.Events.ERROR, function (event, data) {
-            if (data.fatal) {
-              switch (data.type) {
-                case Hls.ErrorTypes.NETWORK_ERROR:
-                  console.log("Network error, trying to recover...");
-                  hls.startLoad();
-                  break;
-                case Hls.ErrorTypes.MEDIA_ERROR:
-                  console.log("Media error, trying to recover...");
-                  hls.recoverMediaError();
-                  break;
-                default:
-                  console.log("Fatal error, destroying player...");
-                  clearInterval(latencyHandler);
-                  hls.destroy();
-                  break;
-              }
-            }
-          });
-
-          // Cleanup on destroy
-          hls.on(Hls.Events.DESTROYING, function () {
-            clearInterval(latencyHandler);
-          });
+        if (video.paused) {
+          video.play();
+          playBtn.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+            </svg>
+          `;
+        } else {
+          video.pause();
+          playBtn.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M8 5v14l11-7z"/>
+            </svg>
+          `;
         }
       }
 
-      // Cleanup function for page unload
-      window.addEventListener("beforeunload", function () {
-        for (const [video, hls] of activePlayers) {
-          hls.destroy();
-        }
-        activePlayers.clear();
-      });
+      function skipBackward(cameraId) {
+        const video = document.getElementById(`video-${cameraId}`);
+        video.currentTime = Math.max(0, video.currentTime - 10);
+      }
 
-      // Visibility change handling
-      document.addEventListener("visibilitychange", function () {
-        if (document.hidden) {
-          // Page is hidden, pause all streams
-          for (const [video, hls] of activePlayers) {
-            video.pause();
-          }
-        } else {
-          // Page is visible again, resume streams
-          for (const [video, hls] of activePlayers) {
-            video.play().catch(console.log);
-          }
-        }
-      });
+      function skipForward(cameraId) {
+        const video = document.getElementById(`video-${cameraId}`);
+        video.currentTime = Math.min(video.duration, video.currentTime + 10);
+      }
 
-      // Memory management
-      setInterval(function () {
-        if (window.performance && window.performance.memory) {
-          const memory = window.performance.memory;
-          if (memory.usedJSHeapSize > memory.jsHeapSizeLimit * 0.8) {
-            console.log("High memory usage, cleaning up...");
-            // Force garbage collection on players
-            for (const [video, hls] of activePlayers) {
-              hls.destroy();
-              hls.attachMedia(video);
+      function seek(event, cameraId) {
+        const progressBar = document.getElementById(`progress-${cameraId}`);
+        const video = document.getElementById(`video-${cameraId}`);
+        const rect = progressBar.getBoundingClientRect();
+        const pos = (event.clientX - rect.left) / rect.width;
+        video.currentTime = pos * video.duration;
+      }
+
+      function updateProgress(cameraId) {
+        const video = document.getElementById(`video-${cameraId}`);
+        const progressFill = document.getElementById(
+          `progress-fill-${cameraId}`
+        );
+        const timeDisplay = document.getElementById(`time-${cameraId}`);
+        const liveIndicator = document.getElementById(`live-${cameraId}`);
+
+        if (video && progressFill && timeDisplay) {
+          const progress = (video.currentTime / video.duration) * 100;
+          progressFill.style.width = `${progress}%`;
+
+          const currentTime = formatTime(video.currentTime);
+          const duration = formatTime(video.duration);
+          timeDisplay.textContent = `${currentTime} / ${duration}`;
+
+          // Update live indicator
+          if (liveIndicator) {
+            const behindLive = video.duration - video.currentTime;
+            if (behindLive > 10) {
+              liveIndicator.classList.add("behind");
+            } else {
+              liveIndicator.classList.remove("behind");
             }
           }
         }
-      }, 30000);
+      }
+
+      function formatTime(seconds) {
+        if (!seconds || isNaN(seconds)) return "00:00";
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${mins.toString().padStart(2, "0")}:${secs
+          .toString()
+          .padStart(2, "0")}`;
+      }
+
+      // Initialize video player with playback controls
+      function initializeVideoPlayer(cameraId, videoElement) {
+        if (!videoElement) return;
+
+        videoElement.addEventListener("timeupdate", () =>
+          updateProgress(cameraId)
+        );
+        videoElement.addEventListener("loadedmetadata", () =>
+          updateProgress(cameraId)
+        );
+
+        // Add keyboard controls when video is focused
+        videoElement.addEventListener("keydown", (e) => {
+          switch (e.key) {
+            case " ":
+            case "k":
+              e.preventDefault();
+              togglePlay(cameraId);
+              break;
+            case "ArrowLeft":
+            case "j":
+              e.preventDefault();
+              skipBackward(cameraId);
+              break;
+            case "ArrowRight":
+            case "l":
+              e.preventDefault();
+              skipForward(cameraId);
+              break;
+          }
+        });
+      }
 
       function jumpToLive(cameraId) {
         const hls = hlsPlayers.get(cameraId);

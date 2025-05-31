@@ -19,24 +19,30 @@ const args = [
     '-y',  // Overwrite output files
     '-rtsp_transport', 'tcp',
     '-user_agent', 'SecurityCam/1.0',
+    
+    // Input options
+    '-analyzeduration', '10000000',  // 10 seconds
+    '-probesize', '10000000',
     '-i', rtspUrl,
     
-    // Input options for stability
-    '-fflags', '+genpts',
+    // Input buffer and sync options
+    '-fflags', '+genpts+igndts+nobuffer',
+    '-flags', 'low_delay',
+    '-strict', 'experimental',
     '-avoid_negative_ts', 'make_zero',
     '-max_delay', '5000000',
-    '-rtbufsize', '100M',
-    '-stimeout', '20000000',
-    '-timeout', '20000000',
+    '-rtbufsize', '256M',
     
     // Native quality - just copy streams
     '-c', 'copy',
+    '-tag:v', 'hvc1',  // Proper HEVC tag for compatibility
+    '-map', '0',
     
     // HLS output for live streaming
     '-f', 'hls',
     '-hls_time', '2',
     '-hls_list_size', '3',
-    '-hls_flags', 'delete_segments+append_list+omit_endlist',
+    '-hls_flags', 'delete_segments+append_list+omit_endlist+independent_segments',
     '-hls_segment_type', 'mpegts',
     '-hls_allow_cache', '0',
     '-hls_segment_filename', path.join(liveDir, 'segment%d.ts'),

@@ -704,7 +704,7 @@
       // Configuration
       const API_BASE_URL = window.location.origin;
       const REFRESH_INTERVAL = 15000; // 15 seconds
-      const CAMERA_IDS = ["102"]; // Let's focus on the one camera we know exists
+      const CAMERA_IDS = ["102"]; // Focus on the configured camera
 
       // Add debug logging
       const DEBUG = true;
@@ -734,14 +734,14 @@
         updateLastUpdateTime();
 
         try {
-          console.log("Loading dashboard...");
+          log("Loading dashboard...");
           // Load system metrics and cameras in parallel
           const [systemData, camerasData] = await Promise.all([
             loadSystemMetrics(),
             loadCameras()
           ]);
 
-          console.log("Dashboard data loaded:", { systemData, camerasData });
+          log("Dashboard data loaded:", { systemData, camerasData });
 
           updateConnectionStatus(true);
           updateSystemMetrics(systemData);
@@ -757,54 +757,26 @@
       // Load system metrics
       async function loadSystemMetrics() {
         try {
-          console.log("Fetching system metrics...");
-          const response = await fetch(`${API_BASE_URL}/system/metrics`);
-          console.log("Response status:", response.status);
+          log("Fetching system metrics...");
+          const response = await fetch(`${API_BASE_URL}/api/system/metrics`);
+          log("Metrics response status:", response.status);
 
           if (!response.ok) {
-            console.warn(
-              "System metrics endpoint returned error:",
-              response.status
-            );
+            console.warn("System metrics endpoint returned error:", response.status);
             throw new Error("System metrics unavailable");
           }
 
           const data = await response.json();
-          console.log("Received metrics data:", data);
+          log("Received metrics data:", data);
 
-          // Handle different possible data structures
-          const metrics = {
-            cpu: {
-              usage:
-                typeof data.cpu === "number"
-                  ? data.cpu
-                  : data.cpu?.usage || data.cpuUsage || 0
-            },
-            memory: {
-              usage:
-                typeof data.memory === "number"
-                  ? data.memory
-                  : data.memory?.usage || data.memoryUsage || 0
-            },
-            disk: {
-              usage:
-                typeof data.disk === "number"
-                  ? data.disk
-                  : data.disk?.usage || data.diskUsage || 0
-            },
-            processes: {
-              ffmpeg:
-                typeof data.ffmpeg === "number"
-                  ? data.ffmpeg
-                  : data.processes?.ffmpeg || data.ffmpegProcesses || 0
-            }
+          return {
+            cpu: { usage: data.cpu || 0 },
+            memory: { usage: data.memory || 0 },
+            disk: { usage: data.disk || 0 },
+            processes: { ffmpeg: data.ffmpeg || 0 }
           };
-
-          console.log("Processed metrics:", metrics);
-          return metrics;
         } catch (error) {
           console.error("Failed to load system metrics:", error);
-          // Return default values with error indication
           return {
             cpu: { usage: -1 },
             memory: { usage: -1 },
@@ -816,7 +788,7 @@
 
       // Load cameras data
       async function loadCameras() {
-        const response = await fetch(`${API_BASE_URL}/streams/cameras`);
+        const response = await fetch(`${API_BASE_URL}/api/streams/cameras`);
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
@@ -1276,12 +1248,12 @@
         }
       }
 
-      // Generate hour selection buttons
+      // Generate hour selection buttons (updated for new format)
       function generateHourButtons(cameraId, date, availableHours) {
         const hours = [];
         for (let i = 0; i < 24; i++) {
           const hour = i.toString().padStart(2, "0");
-          const isAvailable = availableHours.some((h) => h.startsWith(hour));
+          const isAvailable = availableHours.includes(hour);
           hours.push(`
             <button class="hour-btn ${isAvailable ? "available" : ""}" 
                     onclick="playRecording('${cameraId}', '${date}', '${hour}')"
@@ -1303,7 +1275,7 @@
           // Update overlay to show recording status
           const overlay =
             videoElement.parentElement.querySelector(".video-overlay");
-          overlay.textContent = `RECORDED: ${formatDate(date)} ${hour}:00`;
+          overlay.textContent = `RECORDED: ${formatDate(date)} ${hour.padStart(2, '0')}:00`;
           overlay.style.backgroundColor = "#dc2626";
 
           if (hls) {

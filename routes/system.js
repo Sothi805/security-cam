@@ -14,62 +14,90 @@ const execAsync = promisify(exec);
 
 // Helper function to get CPU usage
 async function getCpuUsage() {
-    const startMeasure = os.cpus().map(cpu => ({
-        idle: cpu.times.idle,
-        total: Object.values(cpu.times).reduce((acc, tv) => acc + tv, 0)
-    }));
+    try {
+        const startMeasure = os.cpus().map(cpu => ({
+            idle: cpu.times.idle,
+            total: Object.values(cpu.times).reduce((acc, tv) => acc + tv, 0)
+        }));
 
-    // Wait for 100ms to get a good measurement
-    await new Promise(resolve => setTimeout(resolve, 100));
+        // Wait for 100ms to get a good measurement
+        await new Promise(resolve => setTimeout(resolve, 100));
 
-    const endMeasure = os.cpus().map(cpu => ({
-        idle: cpu.times.idle,
-        total: Object.values(cpu.times).reduce((acc, tv) => acc + tv, 0)
-    }));
+        const endMeasure = os.cpus().map(cpu => ({
+            idle: cpu.times.idle,
+            total: Object.values(cpu.times).reduce((acc, tv) => acc + tv, 0)
+        }));
 
-    const cpuUsage = startMeasure.map((start, i) => {
-        const end = endMeasure[i];
-        const idleDiff = end.idle - start.idle;
-        const totalDiff = end.total - start.total;
-        const usagePercent = 100 - (100 * idleDiff / totalDiff);
-        return usagePercent;
-    });
+        const cpuUsage = startMeasure.map((start, i) => {
+            const end = endMeasure[i];
+            const idleDiff = end.idle - start.idle;
+            const totalDiff = end.total - start.total;
+            const usagePercent = 100 - (100 * idleDiff / totalDiff);
+            return Math.max(0, Math.min(100, usagePercent));
+        });
 
-    // Return average CPU usage across all cores
-    return cpuUsage.reduce((acc, usage) => acc + usage, 0) / cpuUsage.length;
+        // Return average CPU usage across all cores
+        return cpuUsage.reduce((acc, usage) => acc + usage, 0) / cpuUsage.length;
+    } catch (error) {
+        logger.warn('Failed to get CPU usage:', error.message);
+        return 0;
+    }
 }
 
 // Helper function to get memory usage
 function getMemoryUsage() {
-    const totalMem = os.totalmem();
-    const freeMem = os.freemem();
-    const usedMem = totalMem - freeMem;
-    return (usedMem / totalMem) * 100;
+    try {
+        const totalMem = os.totalmem();
+        const freeMem = os.freemem();
+        const usedMem = totalMem - freeMem;
+        return Math.round((usedMem / totalMem) * 100);
+    } catch (error) {
+        logger.warn('Failed to get memory usage:', error.message);
+        return 0;
+    }
 }
 
-// Helper function to get disk usage (simplified)
-function getDiskUsage() {
+// Helper function to get disk usage
+async function getDiskUsage() {
     try {
-        // This is a simplified version. In production, you'd want to use a package
-        // like 'diskusage' to get actual disk stats
-        const usagePercent = Math.random() * 30 + 40; // Random value between 40-70%
-        return usagePercent;
+        const hlsPath = path.resolve(config.hlsPath);
+        
+        if (process.platform === 'win32') {
+            const drive = path.parse(hlsPath).root;
+            const result = await execAsync(`wmic logicaldisk where caption="${drive.replace('\\', '')}" get size,freespace /value`);
+            const freeMatch = result.stdout.match(/FreeSpace=(\d+)/);
+            const sizeMatch = result.stdout.match(/Size=(\d+)/);
+            
+            if (freeMatch && sizeMatch) {
+                const free = parseInt(freeMatch[1]);
+                const total = parseInt(sizeMatch[1]);
+                const used = total - free;
+                return Math.round((used / total) * 100);
+            }
+        } else {
+            const result = await execAsync(`df "${hlsPath}" | tail -1 | awk '{print $5}' | sed 's/%//'`);
+            return parseInt(result.stdout.trim()) || 0;
+        }
+        
+        return 0;
     } catch (error) {
-        console.error('Error getting disk usage:', error);
+        logger.warn('Failed to get disk usage:', error.message);
         return 0;
     }
 }
 
 // Helper function to count FFmpeg processes
-function countFFmpegProcesses() {
+async function countFFmpegProcesses() {
     try {
-        // In a real implementation, you'd want to use something like:
-        // const { execSync } = require('child_process');
-        // const count = execSync('pgrep -c ffmpeg').toString();
-        // For now, we'll return the number of active streams
-        return 2; // Assuming we have 2 FFmpeg processes per camera (live + recording)
+        if (process.platform === 'win32') {
+            const result = await execAsync('tasklist /FI "IMAGENAME eq ffmpeg.exe" /FO CSV | find /C "ffmpeg.exe"');
+            return parseInt(result.stdout.trim()) || 0;
+        } else {
+            const result = await execAsync('pgrep -c ffmpeg || echo 0');
+            return parseInt(result.stdout.trim()) || 0;
+        }
     } catch (error) {
-        console.error('Error counting FFmpeg processes:', error);
+        logger.warn('Failed to count FFmpeg processes:', error.message);
         return 0;
     }
 }
@@ -80,21 +108,25 @@ function countFFmpegProcesses() {
  */
 router.get('/metrics', async (req, res) => {
     try {
-        const [cpuUsage, memoryUsage] = await Promise.all([
+        const [cpuUsage, diskUsage, ffmpegCount] = await Promise.all([
             getCpuUsage(),
-            getMemoryUsage()
+            getDiskUsage(),
+            countFFmpegProcesses()
         ]);
+
+        const memoryUsage = getMemoryUsage();
 
         const metrics = {
             cpu: Math.round(cpuUsage),
-            memory: Math.round(memoryUsage),
-            disk: Math.round(getDiskUsage()),
-            ffmpeg: countFFmpegProcesses()
+            memory: memoryUsage,
+            disk: Math.round(diskUsage),
+            ffmpeg: ffmpegCount,
+            timestamp: new Date().toISOString()
         };
 
         res.json(metrics);
     } catch (error) {
-        console.error('Error getting system metrics:', error);
+        logger.error('Error getting system metrics:', error);
         res.status(500).json({
             error: 'Failed to get system metrics',
             message: error.message
@@ -102,113 +134,89 @@ router.get('/metrics', async (req, res) => {
     }
 });
 
-async function collectSystemMetrics() {
-    const metrics = {
-        cpu: { usage: 0 },
-        memory: { usage: 0 },
-        disk: { usage: 0 },
-        processes: { ffmpeg: 0 },
-        timestamp: new Date().toISOString()
-    };
-
+/**
+ * GET /info
+ * Get system information
+ */
+router.get('/info', (req, res) => {
     try {
-        // Get CPU usage
-        if (process.platform === 'linux' || process.platform === 'darwin') {
-            const cpuResult = await execAsync("top -bn1 | grep 'Cpu(s)' | awk '{print $2}' | cut -d'%' -f1");
-            metrics.cpu.usage = parseFloat(cpuResult.stdout.trim()) || 0;
-        } else if (process.platform === 'win32') {
-            const cpuResult = await execAsync('wmic cpu get loadpercentage /value');
-            const match = cpuResult.stdout.match(/LoadPercentage=(\d+)/);
-            metrics.cpu.usage = match ? parseInt(match[1]) : 0;
-        }
+        const info = {
+            platform: os.platform(),
+            arch: os.arch(),
+            hostname: os.hostname(),
+            uptime: Math.round(os.uptime()),
+            nodeVersion: process.version,
+            totalMemory: Math.round(os.totalmem() / 1024 / 1024 / 1024), // GB
+            cpuCount: os.cpus().length,
+            loadAverage: os.loadavg(),
+            timestamp: new Date().toISOString()
+        };
+
+        res.json(info);
     } catch (error) {
-        console.warn('Failed to get CPU usage:', error.message);
+        logger.error('Error getting system info:', error);
+        res.status(500).json({
+            error: 'Failed to get system info',
+            message: error.message
+        });
     }
+});
 
-    try {
-        // Get Memory usage
-        if (process.platform === 'linux' || process.platform === 'darwin') {
-            const memResult = await execAsync("free | grep Mem | awk '{printf(\"%.1f\", $3/$2 * 100.0)}'");
-            metrics.memory.usage = parseFloat(memResult.stdout.trim()) || 0;
-        } else if (process.platform === 'win32') {
-            const memResult = await execAsync('wmic OS get TotalVisibleMemorySize,FreePhysicalMemory /value');
-            const total = memResult.stdout.match(/TotalVisibleMemorySize=(\d+)/);
-            const free = memResult.stdout.match(/FreePhysicalMemory=(\d+)/);
-            if (total && free) {
-                const totalMem = parseInt(total[1]);
-                const freeMem = parseInt(free[1]);
-                const usedMem = totalMem - freeMem;
-                metrics.memory.usage = (usedMem / totalMem) * 100;
-            }
-        }
-    } catch (error) {
-        console.warn('Failed to get memory usage:', error.message);
-    }
-
-    try {
-        // Get Disk usage for HLS directory
-        const hlsPath = process.env.HLS_ROOT || 'hls';
-        const resolvedPath = path.resolve(hlsPath);
-        
-        if (process.platform === 'linux' || process.platform === 'darwin') {
-            const diskResult = await execAsync(`df "${resolvedPath}" | tail -1 | awk '{print $5}' | sed 's/%//'`);
-            metrics.disk.usage = parseFloat(diskResult.stdout.trim()) || 0;
-        } else if (process.platform === 'win32') {
-            const drive = path.parse(resolvedPath).root;
-            if (drive) {
-                const diskResult = await execAsync(`wmic logicaldisk where caption="${drive.replace('\\', '')}" get size,freespace /value`);
-                const freeMatch = diskResult.stdout.match(/FreeSpace=(\d+)/);
-                const sizeMatch = diskResult.stdout.match(/Size=(\d+)/);
-                if (freeMatch && sizeMatch) {
-                    const free = parseInt(freeMatch[1]);
-                    const total = parseInt(sizeMatch[1]);
-                    const used = total - free;
-                    metrics.disk.usage = (used / total) * 100;
-                }
-            }
-        }
-    } catch (error) {
-        console.warn('Failed to get disk usage:', error.message);
-    }
-
-    try {
-        // Count FFmpeg processes
-        if (process.platform === 'linux' || process.platform === 'darwin') {
-            const ffmpegResult = await execAsync('pgrep -c ffmpeg || echo 0');
-            metrics.processes.ffmpeg = parseInt(ffmpegResult.stdout.trim()) || 0;
-        } else if (process.platform === 'win32') {
-            const ffmpegResult = await execAsync('tasklist /FI "IMAGENAME eq ffmpeg.exe" /FO CSV | find /C "ffmpeg.exe"');
-            metrics.processes.ffmpeg = parseInt(ffmpegResult.stdout.trim()) || 0;
-        }
-    } catch (error) {
-        console.warn('Failed to count FFmpeg processes:', error.message);
-    }
-
-    // Add Node.js process info
-    const memUsage = process.memoryUsage();
-    metrics.node = {
-        memory: {
-            rss: Math.round(memUsage.rss / 1024 / 1024), // MB
-            heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024), // MB
-            heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024), // MB
-            external: Math.round(memUsage.external / 1024 / 1024) // MB
-        },
-        uptime: Math.round(process.uptime()), // seconds
-        pid: process.pid,
-        version: process.version
-    };
-
-    return metrics;
-}
-
-// Health check endpoint
+/**
+ * GET /health
+ * Get detailed health check
+ */
 router.get('/health', async (req, res) => {
     try {
-        const status = healthMonitor.getStatus();
-        res.json(status);
+        const health = {
+            status: 'healthy',
+            timestamp: new Date().toISOString(),
+            uptime: process.uptime(),
+            memory: process.memoryUsage(),
+            version: require('../package.json').version,
+            environment: config.nodeEnv,
+            cameras: config.cameraIds.length,
+            checks: {
+                ffmpeg: false,
+                hls_directory: false,
+                config_valid: false
+            }
+        };
+
+        // Check FFmpeg availability
+        try {
+            await execAsync(`${config.ffmpegPath} -version`);
+            health.checks.ffmpeg = true;
+        } catch (error) {
+            health.checks.ffmpeg = false;
+        }
+
+        // Check HLS directory
+        try {
+            await fs.promises.access(config.hlsPath, fs.constants.R_OK | fs.constants.W_OK);
+            health.checks.hls_directory = true;
+        } catch (error) {
+            health.checks.hls_directory = false;
+        }
+
+        // Check config validity
+        health.checks.config_valid = config.cameraIds.length > 0 && 
+                                     config.rtspUser && 
+                                     config.rtspPassword &&
+                                     config.rtspHost;
+
+        // Set overall status
+        const allChecksPass = Object.values(health.checks).every(check => check);
+        health.status = allChecksPass ? 'healthy' : 'degraded';
+
+        res.json(health);
     } catch (error) {
-        logger.error('Failed to get health status:', error);
-        res.status(500).json({ error: 'Failed to get health status' });
+        logger.error('Error getting health status:', error);
+        res.status(500).json({
+            status: 'unhealthy',
+            error: error.message,
+            timestamp: new Date().toISOString()
+        });
     }
 });
 

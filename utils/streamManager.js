@@ -15,13 +15,42 @@ class StreamManager {
         this.retentionDays = process.env.NODE_ENV === 'production' ? 30 : 1;
         this.setupHourlyRotation();
         this.setupRetentionCleanup();
-        this.setupSegmentMover();
         this.pathUtils = new PathUtils();
         this.init();
     }
 
     async init() {
         await this.pathUtils.init();
+        // Clean up old structure and ensure new structure
+        await this.migrateToNewStructure();
+    }
+
+    // Migrate from old structure to new structure
+    async migrateToNewStructure() {
+        logger.info('🔄 Migrating to new HLS file structure...');
+        
+        for (const cameraId of config.cameraIds) {
+            const cameraDir = path.join(config.paths.hls, cameraId.toString());
+            
+            // Remove old quality-based directories if they exist
+            const oldHighDir = path.join(cameraDir, 'live', 'high');
+            const oldLowDir = path.join(cameraDir, 'live', 'low');
+            
+            if (await fs.pathExists(oldHighDir)) {
+                await fs.remove(oldHighDir);
+                logger.info(`🗑️ Removed old high quality directory for camera ${cameraId}`);
+            }
+            
+            if (await fs.pathExists(oldLowDir)) {
+                await fs.remove(oldLowDir);
+                logger.info(`🗑️ Removed old low quality directory for camera ${cameraId}`);
+            }
+            
+            // Ensure new structure exists
+            await this.ensureCameraDirectories(cameraId);
+        }
+        
+        logger.info('✅ Migration to new HLS structure completed');
     }
 
     // Initialize streams for all cameras
@@ -52,43 +81,43 @@ class StreamManager {
         this.updateStreamStatus(cameraId, 'starting');
     }
 
-    // Ensure all required directories exist
+    // Ensure all required directories exist with new structure
     async ensureCameraDirectories(cameraId) {
-        // Base camera directory
+        // Base camera directory: hls/{camera_id}/
         const cameraDir = path.join(config.paths.hls, cameraId.toString());
         await fs.ensureDir(cameraDir);
 
-        // Live directory
+        // Live directory: hls/{camera_id}/live/
         const liveDir = path.join(cameraDir, 'live');
         await fs.ensureDir(liveDir);
         
-        // Recordings directory with date and hour structure
+        // Recordings directory: hls/{camera_id}/recordings/
+        const recordingsBaseDir = path.join(cameraDir, 'recordings');
+        await fs.ensureDir(recordingsBaseDir);
+        
+        // Current date and hour directories: hls/{camera_id}/recordings/YYYY-MM-DD/HH/
         const date = moment().format('YYYY-MM-DD');
         const hour = moment().format('HH');
-        const recordingsDir = path.join(cameraDir, 'recordings', date, hour);
+        const recordingsDir = path.join(recordingsBaseDir, date, hour);
         await fs.ensureDir(recordingsDir);
+        
+        logger.debug(`✅ Directory structure ensured for camera ${cameraId}:`);
+        logger.debug(`   📁 ${cameraDir}`);
+        logger.debug(`   📁 ${liveDir}`);
+        logger.debug(`   📁 ${recordingsDir}`);
     }
 
-    // Start a stream
+    // Start a stream with improved dual-output ffmpeg command
     async startStream(cameraId) {
         try {
             // Stop existing stream if running
             await this.stopStream(cameraId);
             
-            // Ensure base directories exist
-            const cameraDir = path.join(config.paths.hls, cameraId.toString());
-            const liveDir = path.join(cameraDir, 'live');
+            // Ensure directories exist
+            await this.ensureCameraDirectories(cameraId);
             
-            await fs.ensureDir(cameraDir);
-            await fs.ensureDir(liveDir);
-            
-            logger.info(`Ensured directories exist for camera ${cameraId}:`);
-            logger.info(`- Camera dir: ${cameraDir}`);
-            logger.info(`- Live dir: ${liveDir}`);
-            
-            // Get FFmpeg commands for both live and recording
-            const liveCommand = this.getLiveStreamCommand(cameraId);
-            const recordCommand = this.getRecordingCommand(cameraId);
+            // Get FFmpeg command for dual output (live streaming + recording)
+            const ffmpegCommand = this.getDualOutputCommand(cameraId);
             
             // Mask sensitive information in logs
             const maskCommand = (cmd) => {
@@ -100,45 +129,30 @@ class StreamManager {
                 });
             };
             
-            logger.info(`Starting FFmpeg processes for camera ${cameraId}:`);
-            logger.info(`Live command: ${maskCommand(liveCommand).join(' ')}`);
-            logger.info(`Record command: ${maskCommand(recordCommand).join(' ')}`);
+            logger.info(`Starting FFmpeg process for camera ${cameraId}:`);
+            logger.info(`Command: ${maskCommand(ffmpegCommand).join(' ')}`);
             
-            // Start both processes
-            const [livePath, ...liveArgs] = liveCommand;
-            const [recordPath, ...recordArgs] = recordCommand;
+            // Start single FFmpeg process with dual outputs
+            const [ffmpegPath, ...args] = ffmpegCommand;
             
-            // Spawn FFmpeg processes with proper stdio options
-            const liveProcess = spawn(livePath, liveArgs, {
-                stdio: ['ignore', 'pipe', 'pipe'],
-                detached: false,
-                windowsHide: true
-            });
-            
-            const recordProcess = spawn(recordPath, recordArgs, {
+            const ffmpegProcess = spawn(ffmpegPath, args, {
                 stdio: ['ignore', 'pipe', 'pipe'],
                 detached: false,
                 windowsHide: true
             });
 
-            if (!liveProcess.pid) {
-                throw new Error(`Failed to start live FFmpeg process for camera ${cameraId}`);
-            }
-            if (!recordProcess.pid) {
-                throw new Error(`Failed to start recording FFmpeg process for camera ${cameraId}`);
+            if (!ffmpegProcess.pid) {
+                throw new Error(`Failed to start FFmpeg process for camera ${cameraId}`);
             }
 
-            // Store process references
-            this.activeStreams.set(cameraId, {
-                live: liveProcess,
-                record: recordProcess
-            });
+            // Store process reference
+            this.activeStreams.set(cameraId, ffmpegProcess);
 
             // Setup process handlers
-            this.setupProcessHandlers(liveProcess, cameraId, 'live');
-            this.setupProcessHandlers(recordProcess, cameraId, 'record');
+            this.setupProcessHandlers(ffmpegProcess, cameraId, 'dual');
             
-            logger.info(`✅ Started streams for camera ${cameraId}`);
+            logger.info(`✅ Started dual-output stream for camera ${cameraId} (PID: ${ffmpegProcess.pid})`);
+            this.updateStreamStatus(cameraId, 'running');
             
         } catch (error) {
             logger.error(`❌ Failed to start stream for camera ${cameraId}:`, error.message);
@@ -151,109 +165,98 @@ class StreamManager {
         }
     }
 
-    // Get FFmpeg command for live streaming
-    getLiveStreamCommand(cameraId) {
-        const liveDir = path.join(config.paths.hls, cameraId.toString(), 'live');
+    // Get FFmpeg command for dual output (live streaming + recording)
+    getDualOutputCommand(cameraId) {
+        const cameraDir = path.join(config.paths.hls, cameraId.toString());
+        const liveDir = path.join(cameraDir, 'live');
+        const recordingsBaseDir = path.join(cameraDir, 'recordings');
         
-        // Ensure live directory exists
+        // Ensure directories exist
         fs.ensureDirSync(liveDir);
-        logger.info(`Ensuring live directory exists: ${liveDir}`);
+        fs.ensureDirSync(recordingsBaseDir);
         
-        const baseArgs = [
-            '-y',  // Overwrite output files
-            '-rtsp_transport', 'tcp',
-            '-user_agent', 'LibVLC/3.0.0',
-            '-i', this.getRtspUrl(cameraId),
-            '-c:v', 'libx264',
-            '-preset', 'ultrafast',
-            '-tune', 'zerolatency',
-            '-profile:v', 'baseline',
-            '-level', '3.0',
-            '-s', '640x360',  // Use -s instead of scale filter
-            '-b:v', '800k',
-            '-maxrate', '856k',
-            '-bufsize', '1200k',
-            '-r', '15',  // Force 15fps
-            '-g', '30',
-            '-keyint_min', '30',
-            '-sc_threshold', '0',
-            '-f', 'hls',
-            '-hls_time', '2',
-            '-hls_list_size', '3',  // Keep fewer segments
-            '-hls_flags', 'delete_segments+append_list',
-            '-hls_segment_type', 'mpegts',
-            '-hls_allow_cache', '0',
-            '-method', 'PUT',
-            '-hls_segment_filename', path.join(liveDir, 'segment%d.ts'),
-            path.join(liveDir, 'live.m3u8')
-        ];
-
-        return [config.ffmpegPath, ...baseArgs];
-    }
-
-    // Get FFmpeg command for recording
-    getRecordingCommand(cameraId) {
         const date = moment().format('YYYY-MM-DD');
         const hour = moment().format('HH');
-        const recordingsDir = path.join(config.paths.hls, cameraId.toString(), 'recordings', date, hour);
-        
-        // Ensure the directory exists
-        fs.ensureDirSync(path.join(config.paths.hls, cameraId.toString(), 'recordings'));
-        fs.ensureDirSync(path.join(config.paths.hls, cameraId.toString(), 'recordings', date));
+        const recordingsDir = path.join(recordingsBaseDir, date, hour);
         fs.ensureDirSync(recordingsDir);
         
-        logger.info(`Created recordings directory: ${recordingsDir}`);
+        logger.info(`Setting up stream for camera ${cameraId}:`);
+        logger.info(`Live: ${liveDir}`);
+        logger.info(`Recordings: ${recordingsDir}`);
         
-        const baseArgs = [
+        const rtspUrl = this.getRtspUrl(cameraId);
+        
+        // Single output with tee to duplicate streams - more reliable than dual outputs
+        const args = [
             '-y',  // Overwrite output files
             '-rtsp_transport', 'tcp',
-            '-user_agent', 'LibVLC/3.0.0',
-            '-i', this.getRtspUrl(cameraId),
+            '-user_agent', 'SecurityCam/1.0',
+            '-i', rtspUrl,
+            
+            // Input options for stability with Hikvision cameras
+            '-fflags', '+genpts+discardcorrupt',
+            '-avoid_negative_ts', 'make_zero',
+            '-max_delay', '5000000',
+            '-reorder_queue_size', '10',
+            '-rtbufsize', '100M',
+            '-stimeout', '20000000',
+            '-timeout', '20000000',
+            
+            // Video encoding settings - optimized for Hikvision
             '-c:v', 'libx264',
-            '-preset', 'medium',
-            '-profile:v', 'main',
-            '-level', '4.0',
-            '-s', '640x360',  // Use -s instead of scale filter
-            '-b:v', '1000k',
-            '-maxrate', '1200k',
+            '-preset', 'faster',
+            '-tune', 'zerolatency',
+            '-profile:v', 'baseline',
+            '-level', '3.1',
+            '-pix_fmt', 'yuv420p',
+            '-s', '640x360',
+            '-r', '15',
+            '-b:v', '800k',
+            '-maxrate', '1000k',
             '-bufsize', '2000k',
-            '-r', '15',  // Force 15fps
             '-g', '30',
-            '-keyint_min', '30',
+            '-keyint_min', '15',
             '-sc_threshold', '0',
-            '-f', 'hls',
-            '-hls_time', '60',
-            '-hls_list_size', '0',
-            '-hls_flags', 'append_list',
-            '-hls_segment_type', 'mpegts',
-            '-strftime', '1',
-            '-hls_segment_filename', path.join(recordingsDir, '%M.ts'),
-            path.join(recordingsDir, 'playlist.m3u8')
+            '-x264-params', 'nal-hrd=cbr:force-cfr=1',
+            
+            // Audio settings
+            '-c:a', 'aac',
+            '-b:a', '64k',
+            '-ar', '22050',
+            '-ac', '1',
+            '-async', '1',
+            
+            // Use map and tee for dual output
+            '-f', 'tee',
+            '-map', '0',
+            `[f=hls:hls_time=2:hls_list_size=3:hls_flags=delete_segments+append_list+omit_endlist:hls_segment_type=mpegts:hls_allow_cache=0:hls_segment_filename=${path.join(liveDir, 'segment%d.ts').replace(/\\/g, '/')}]${path.join(liveDir, 'live.m3u8').replace(/\\/g, '/')}|[f=hls:hls_time=60:hls_list_size=0:hls_flags=append_list+split_by_time:hls_segment_type=mpegts:hls_segment_filename=${path.join(recordingsDir, '%M.ts').replace(/\\/g, '/')}]${path.join(recordingsDir, 'playlist.m3u8').replace(/\\/g, '/')}`
         ];
 
-        return [config.ffmpegPath, ...baseArgs];
+        return [config.ffmpegPath, ...args];
     }
 
     // Stop a stream
     async stopStream(cameraId) {
         if (this.activeStreams.has(cameraId)) {
-            const streams = this.activeStreams.get(cameraId);
+            const process = this.activeStreams.get(cameraId);
             logger.info(`Stopping stream for camera ${cameraId}`);
             
-            if (streams.live) streams.live.kill('SIGTERM');
-            if (streams.record) streams.record.kill('SIGTERM');
-            
-            // Force kill after timeout
-            setTimeout(() => {
-                if (streams.live && !streams.live.killed) {
-                    logger.warn(`Force killing live stream for camera ${cameraId}`);
-                    streams.live.kill('SIGKILL');
+            try {
+                // Send SIGTERM first for graceful shutdown
+                if (process && !process.killed) {
+                    process.kill('SIGTERM');
+                    
+                    // Force kill after timeout
+                    setTimeout(() => {
+                        if (process && !process.killed) {
+                            logger.warn(`Force killing stream for camera ${cameraId}`);
+                            process.kill('SIGKILL');
+                        }
+                    }, 10000);
                 }
-                if (streams.record && !streams.record.killed) {
-                    logger.warn(`Force killing recording stream for camera ${cameraId}`);
-                    streams.record.kill('SIGKILL');
-                }
-            }, 10000);
+            } catch (error) {
+                logger.error(`Error stopping stream for camera ${cameraId}:`, error);
+            }
             
             this.activeStreams.delete(cameraId);
             this.updateStreamStatus(cameraId, 'stopped');
@@ -279,111 +282,64 @@ class StreamManager {
         logger.info('All streams stopped');
     }
 
-    // Setup segment mover
-    setupSegmentMover() {
-        setInterval(async () => {
-            for (const cameraId of config.cameraIds) {
-                await this.moveOldSegments(cameraId);
+    // Setup hourly rotation for recordings
+    setupHourlyRotation() {
+        // Check every minute and rotate at the start of each hour
+        this.hourlyTimer = setInterval(async () => {
+            const now = moment();
+            if (now.minute() === 0 && now.second() < 30) {
+                logger.info('🔄 Starting hourly rotation...');
+                await this.rotateAllStreams();
             }
         }, 30000); // Check every 30 seconds
     }
 
-    // Move old segments from live to recordings
-    async moveOldSegments(cameraId) {
-        try {
-            const liveDir = this.pathUtils.getLiveDir(cameraId);
-            const files = await fs.readdir(liveDir);
-            const now = moment();
-
-            for (const file of files) {
-                if (!file.endsWith('.ts')) continue;
-
-                const filePath = path.join(liveDir, file);
-                const stats = await fs.stat(filePath);
-                const fileAge = moment().diff(moment(stats.mtime), 'seconds');
-
-                // Move segments older than 60 seconds
-                if (fileAge > 60) {
-                    const date = moment(stats.mtime).format('YYYY-MM-DD');
-                    const hour = moment(stats.mtime).format('HH');
-                    const minute = moment(stats.mtime).format('mm');
+    // Rotate all streams to new hour directories
+    async rotateAllStreams() {
+        for (const cameraId of config.cameraIds) {
+            try {
+                if (this.isStreamRunning(cameraId)) {
+                    logger.info(`🔄 Rotating stream for camera ${cameraId} to new hour`);
                     
-                    // Ensure recording directory exists
-                    await this.pathUtils.ensureRecordingDir(cameraId, date, hour);
+                    // Ensure new hour directory exists
+                    await this.ensureCameraDirectories(cameraId);
                     
-                    // Get target path with proper naming
-                    const targetPath = this.pathUtils.getRecordingSegmentPath(cameraId, date, hour, minute);
-
-                    try {
-                        await fs.move(filePath, targetPath, { overwrite: true });
-                        await this.updateRecordingPlaylist(cameraId, date, hour);
-                        logger.debug(`Moved segment ${file} to recordings for camera ${cameraId}`);
-                    } catch (error) {
-                        logger.error(`Failed to move segment ${file} for camera ${cameraId}:`, error);
-                    }
+                    // Restart the stream to use new directory
+                    await this.startStream(cameraId);
                 }
+            } catch (error) {
+                logger.error(`Failed to rotate stream for camera ${cameraId}:`, error);
             }
-        } catch (error) {
-            logger.error(`Error moving segments for camera ${cameraId}:`, error);
-        }
-    }
-
-    // Update recording playlist for specific hour
-    async updateRecordingPlaylist(cameraId, date, hour) {
-        try {
-            const recordingDir = this.pathUtils.getRecordingsDir(cameraId, date, hour);
-            const playlistPath = this.pathUtils.getRecordingPlaylistPath(cameraId, date, hour);
-            
-            const files = await fs.readdir(recordingDir);
-            const segments = files
-                .filter(f => f.endsWith('.ts'))
-                .sort((a, b) => {
-                    const aMin = parseInt(a.split('.')[0]);
-                    const bMin = parseInt(b.split('.')[0]);
-                    return aMin - bMin;
-                });
-
-            let playlist = '#EXTM3U\n';
-            playlist += '#EXT-X-VERSION:3\n';
-            playlist += '#EXT-X-TARGETDURATION:60\n';
-            playlist += '#EXT-X-MEDIA-SEQUENCE:0\n\n';
-
-            for (const segment of segments) {
-                playlist += '#EXTINF:60.0,\n';
-                playlist += segment + '\n';
-            }
-
-            await fs.writeFile(playlistPath, playlist);
-            logger.debug(`Updated recording playlist for camera ${cameraId} at ${date}/${hour}`);
-        } catch (error) {
-            logger.error(`Failed to update recording playlist for camera ${cameraId}:`, error);
         }
     }
 
     // Setup retention cleanup
     setupRetentionCleanup() {
-        // Run cleanup daily at midnight
+        // Run cleanup every hour
         setInterval(async () => {
-            if (moment().hour() === 0 && moment().minute() === 0) {
-                await this.cleanupOldRecordings();
-            }
-        }, 60000); // Check every minute
+            await this.cleanupOldRecordings();
+        }, 3600000); // Every hour
     }
 
-    // Cleanup old recordings
+    // Cleanup old recordings based on retention policy
     async cleanupOldRecordings() {
         try {
             const cutoffDate = moment().subtract(this.retentionDays, 'days').format('YYYY-MM-DD');
+            logger.info(`🧹 Cleaning up recordings older than ${cutoffDate}`);
             
             for (const cameraId of config.cameraIds) {
                 const cameraDir = path.join(config.paths.hls, cameraId.toString());
-                const dates = await fs.readdir(cameraDir);
+                const recordingsDir = path.join(cameraDir, 'recordings');
+                
+                if (!await fs.pathExists(recordingsDir)) continue;
+                
+                const dates = await fs.readdir(recordingsDir);
                 
                 for (const date of dates) {
-                    if (date !== 'live' && date < cutoffDate) {
-                        const dateDir = path.join(cameraDir, date);
+                    if (date < cutoffDate) {
+                        const dateDir = path.join(recordingsDir, date);
                         await fs.remove(dateDir);
-                        logger.info(`🧹 Cleaned up old recordings for camera ${cameraId} from ${date}`);
+                        logger.info(`🗑️ Cleaned up old recordings for camera ${cameraId} from ${date}`);
                     }
                 }
             }
@@ -400,9 +356,13 @@ class StreamManager {
             const rawMessage = data.toString();
             const message = rawMessage.trim();
             
-            // Only log if message has actual visible content (not just whitespace, newlines, or empty)
+            // Log important messages
             if (message && message.length > 0 && message.replace(/\s/g, '').length > 0) {
-                logger.info(`FFmpeg stdout [${streamKey}]: ${message}`);
+                if (message.includes('error') || message.includes('failed') || message.includes('warning')) {
+                    logger.warn(`FFmpeg [${streamKey}]: ${message}`);
+                } else if (config.debugMode) {
+                    logger.debug(`FFmpeg [${streamKey}]: ${message}`);
+                }
             }
         });
 
@@ -410,148 +370,96 @@ class StreamManager {
             const rawMessage = data.toString();
             const message = rawMessage.trim();
             
-            // Only log if message has actual visible content (not just whitespace, newlines, or empty)
-            if (message && message.length > 0 && message.replace(/\s/g, '').length > 0) {
-                // Enhanced logging with different levels based on content
-                if (message.includes('Error') || message.includes('Failed') || message.includes('Connection refused')) {
-                    logger.error(`🔴 FFmpeg ERROR [${streamKey}]: ${message}`);
-                } else if (message.includes('Warning') || message.includes('timeout')) {
-                    logger.warn(`🟡 FFmpeg WARNING [${streamKey}]: ${message}`);
-                } else if (message.includes('Opening') || message.includes('Stream') || message.includes('Video:') || message.includes('Audio:')) {
-                    logger.info(`🔵 FFmpeg INFO [${streamKey}]: ${message}`);
-                } else {
-                    logger.debug(`⚪ FFmpeg DEBUG [${streamKey}]: ${message}`);
-                }
-                
-                // Look for specific error patterns with detailed logging
-                if (message.includes('Connection refused') || message.includes('Network is unreachable')) {
-                    logger.error(`🚨 NETWORK ERROR for ${streamKey}: Cannot reach camera at ${this.getRtspUrl(cameraId).replace(/:[^:@]+@/, ':***@')}`);
-                    this.updateStreamStatus(cameraId, 'network_error');
-                } else if (message.includes('Invalid data found') || message.includes('No such file or directory')) {
-                    logger.error(`🚨 STREAM ERROR for ${streamKey}: Invalid RTSP stream or wrong URL format`);
-                    this.updateStreamStatus(cameraId, 'data_error');
-                } else if (message.includes('401 Unauthorized') || message.includes('Authentication failed')) {
-                    logger.error(`🚨 AUTH ERROR for ${streamKey}: Wrong username/password for camera`);
-                    this.updateStreamStatus(cameraId, 'auth_error');
-                } else if (message.includes('404 Not Found') || message.includes('Stream not found')) {
-                    logger.error(`🚨 STREAM NOT FOUND for ${streamKey}: Camera channel ${cameraId} does not exist`);
-                    this.updateStreamStatus(cameraId, 'not_found');
+            if (message && message.length > 0) {
+                // Filter out common non-error messages
+                if (!message.includes('frame=') && 
+                    !message.includes('fps=') && 
+                    !message.includes('size=') && 
+                    !message.includes('time=') && 
+                    !message.includes('bitrate=') && 
+                    !message.includes('speed=')) {
+                    
+                    if (message.includes('error') || message.includes('failed')) {
+                        logger.error(`FFmpeg [${streamKey}]: ${message}`);
+                    } else if (message.includes('warning')) {
+                        logger.warn(`FFmpeg [${streamKey}]: ${message}`);
+                    } else if (config.debugMode) {
+                        logger.debug(`FFmpeg [${streamKey}]: ${message}`);
+                    }
                 }
             }
         });
 
-        process.on('close', (code, signal) => {
-            if (code === 0) {
-                logger.info(`✅ FFmpeg process ${streamKey} closed cleanly`);
-            } else {
-                logger.error(`❌ FFmpeg process ${streamKey} closed with ERROR code ${code}, signal ${signal}`);
-                if (code === 1) {
-                    logger.error(`🔍 Exit code 1 usually means: Connection failed, wrong URL, or authentication issue`);
-                } else if (code === 255 || code === -1) {
-                    logger.error(`🔍 Exit code ${code} usually means: Network timeout or camera unreachable`);
+        process.on('close', (code) => {
+            if (code !== 0) {
+                logger.error(`FFmpeg process [${streamKey}] exited with code ${code}`);
+                this.updateStreamStatus(cameraId, 'error');
+                
+                if (config.autoRestart && this.getRestartAttempts(cameraId) < 5) {
+                    this.scheduleRestart(cameraId);
                 }
-            }
-            
-            this.updateStreamStatus(cameraId, code === 0 ? 'stopped' : 'error');
-            
-            // Remove from active streams
-            if (this.activeStreams.has(cameraId)) {
-                delete this.activeStreams.get(cameraId)[type];
-            }
-            
-            // Auto-restart if configured and not manually stopped
-            if (config.autoRestart && code !== 0) {
-                logger.warn(`🔄 Auto-restarting ${streamKey} due to error (exit code: ${code})`);
-                this.scheduleRestart(cameraId);
+            } else {
+                logger.info(`FFmpeg process [${streamKey}] ended normally`);
             }
         });
 
         process.on('error', (error) => {
-            logger.error(`💥 FFmpeg process SPAWN ERROR for ${streamKey}:`, error.message);
-            if (error.code === 'ENOENT') {
-                logger.error(`🔍 ENOENT error means: FFmpeg not found. Check FFMPEG_PATH in environment`);
-            } else if (error.code === 'EACCES') {
-                logger.error(`🔍 EACCES error means: Permission denied to run FFmpeg`);
-            }
-            logger.error(`🔍 Full error:`, error);
+            logger.error(`FFmpeg process [${streamKey}] error:`, error);
             this.updateStreamStatus(cameraId, 'error');
             
             if (config.autoRestart) {
-                logger.info(`🔄 Scheduling restart after spawn error for ${streamKey}`);
                 this.scheduleRestart(cameraId);
             }
         });
 
-        // Mark as running after successful start
+        // Update status to running when process starts successfully
         setTimeout(() => {
-            if (process.pid && !process.killed) {
+            if (process && !process.killed) {
                 this.updateStreamStatus(cameraId, 'running');
                 this.resetRestartAttempts(cameraId);
-                logger.info(`✅ FFmpeg process ${streamKey} is running with PID ${process.pid}`);
+                logger.info(`✅ Stream for camera ${cameraId} is running (PID: ${process.pid})`);
             }
-        }, 15000); // Increased from 5 seconds to 15 seconds for transcoding startup
+        }, 5000);
     }
 
-    // Schedule a restart with exponential backoff
+    // Schedule restart with exponential backoff
     scheduleRestart(cameraId) {
-        const streamKey = `${cameraId}-live`;
-        const attempts = this.getRestartAttempts(cameraId);
+        const attempts = this.incrementRestartAttempts(cameraId);
+        const delay = Math.min(1000 * Math.pow(2, attempts), 60000); // Max 1 minute delay
         
-        if (attempts >= 5) {
-            logger.error(`Max restart attempts reached for ${streamKey}, giving up`);
-            this.updateStreamStatus(cameraId, 'failed');
-            return;
-        }
-        
-        const delay = Math.min(1000 * Math.pow(2, attempts), 60000); // Max 1 minute
-        logger.info(`Scheduling restart for ${streamKey} in ${delay}ms (attempt ${attempts + 1})`);
+        logger.info(`⏰ Scheduling restart for camera ${cameraId} in ${delay}ms (attempt ${attempts})`);
         
         setTimeout(async () => {
-            this.incrementRestartAttempts(cameraId);
-            await this.restartStream(cameraId);
+            try {
+                if (attempts <= 5) {
+                    logger.info(`🔄 Restarting camera ${cameraId} (attempt ${attempts})`);
+                    await this.startStream(cameraId);
+                } else {
+                    logger.error(`❌ Max restart attempts reached for camera ${cameraId}`);
+                    this.updateStreamStatus(cameraId, 'failed');
+                }
+            } catch (error) {
+                logger.error(`Failed to restart camera ${cameraId}:`, error);
+            }
         }, delay);
     }
 
-    // Setup hourly rotation for new playlist files
-    setupHourlyRotation() {
-        // Check every minute if we need to rotate to a new hour
-        this.hourlyTimer = setInterval(() => {
-            const currentHour = moment().format('HH-mm');
-            
-            // If we're at minute 00, start new hour streams
-            if (moment().minute() === 0) {
-                logger.info(`Rotating to new hour: ${currentHour}`);
-                this.rotateAllStreams();
-            }
-        }, 60000); // Check every minute
-    }
-
-    // Rotate all streams to new hour
-    async rotateAllStreams() {
-        for (const cameraId of config.cameraIds) {
-            if (this.isStreamRunning(cameraId)) {
-                // Just restart the stream - FFmpeg will automatically create new files
-                await this.restartStream(cameraId);
-            }
-        }
-    }
-
-    // Status management
     updateStreamStatus(cameraId, status) {
-        if (!this.streamStatus.has(cameraId)) {
-            this.streamStatus.set(cameraId, {});
-        }
-        this.streamStatus.get(cameraId)['status'] = status;
-        this.streamStatus.get(cameraId)['timestamp'] = moment().toISOString();
+        this.streamStatus.set(cameraId, {
+            status,
+            timestamp: moment().toISOString(),
+            restartAttempts: this.getRestartAttempts(cameraId)
+        });
         
-        logger.debug(`Stream status updated: ${cameraId} = ${status}`);
+        logger.debug(`📊 Camera ${cameraId} status: ${status}`);
     }
 
     getStreamStatus(cameraId) {
-        if (this.streamStatus.has(cameraId)) {
-            return this.streamStatus.get(cameraId) || { status: 'unknown', timestamp: null };
-        }
-        return { status: 'unknown', timestamp: null };
+        return this.streamStatus.get(cameraId) || { 
+            status: 'unknown', 
+            timestamp: null,
+            restartAttempts: 0
+        };
     }
 
     isStreamRunning(cameraId) {
@@ -559,100 +467,116 @@ class StreamManager {
         return status.status === 'running';
     }
 
-    // Restart attempt management
     getRestartAttempts(cameraId) {
-        const key = `${cameraId}-live`;
-        return this.restartAttempts.get(key) || 0;
+        return this.restartAttempts.get(cameraId) || 0;
     }
 
     incrementRestartAttempts(cameraId) {
-        const key = `${cameraId}-live`;
         const current = this.getRestartAttempts(cameraId);
-        this.restartAttempts.set(key, current + 1);
+        const newCount = current + 1;
+        this.restartAttempts.set(cameraId, newCount);
+        return newCount;
     }
 
     resetRestartAttempts(cameraId) {
-        const key = `${cameraId}-live`;
-        this.restartAttempts.delete(key);
+        this.restartAttempts.set(cameraId, 0);
     }
 
-    // Get comprehensive status for all streams
     getAllStreamStatus() {
         const status = {};
-        
         for (const cameraId of config.cameraIds) {
             status[cameraId] = this.getStreamStatus(cameraId);
         }
-        
         return status;
     }
 
-    // Check stream health
     async checkStreamHealth() {
         const health = {};
         
         for (const cameraId of config.cameraIds) {
-            health[cameraId] = await this.checkStreamFile(cameraId);
+            try {
+                const streamHealth = await this.pathUtils.getStreamHealth(cameraId);
+                health[cameraId] = streamHealth;
+            } catch (error) {
+                health[cameraId] = {
+                    healthy: false,
+                    error: error.message,
+                    lastCheck: moment().toISOString()
+                };
+            }
         }
         
         return health;
     }
 
-    // Check if stream file exists and is recent
     async checkStreamFile(cameraId) {
         try {
-            const streamPath = config.getStreamPath(cameraId);
+            const livePlaylist = path.join(config.paths.hls, cameraId.toString(), 'live', 'live.m3u8');
             
-            if (!await fs.pathExists(streamPath)) {
-                return { healthy: false, reason: 'file_not_found' };
+            if (!await fs.pathExists(livePlaylist)) {
+                return { exists: false, error: 'Live playlist not found' };
             }
             
-            const stats = await fs.stat(streamPath);
-            const ageMs = Date.now() - stats.mtime.getTime();
-            const maxAge = 120000; // 2 minutes - give FFmpeg time to start and transcode
+            const stats = await fs.stat(livePlaylist);
+            const age = moment().diff(moment(stats.mtime), 'seconds');
             
-            if (ageMs > maxAge) {
-                return { healthy: false, reason: 'file_stale', ageMs };
-            }
-            
-            return { healthy: true, lastModified: stats.mtime };
-            
+            return {
+                exists: true,
+                lastModified: stats.mtime,
+                ageSeconds: age,
+                stale: age > 30 // Consider stale if older than 30 seconds
+            };
         } catch (error) {
-            return { healthy: false, reason: 'check_error', error: error.message };
+            return { exists: false, error: error.message };
         }
     }
 
-    // Cleanup on shutdown
     async shutdown() {
-        logger.info('Shutting down stream manager');
+        logger.info('🛑 Shutting down StreamManager...');
         
         if (this.hourlyTimer) {
             clearInterval(this.hourlyTimer);
         }
         
         await this.stopAllStreams();
-        
-        logger.info('Stream manager shutdown complete');
+        logger.info('✅ StreamManager shutdown complete');
     }
 
+    // Helper methods for backward compatibility
     getStreamDirectory(cameraId) {
-        const date = moment().format('YYYY-MM-DD');
-        const baseDir = path.join(config.paths.hls, cameraId.toString(), date);
-        fs.mkdirSync(baseDir, { recursive: true });
-        return baseDir;
+        return path.join(config.paths.hls, cameraId.toString());
     }
 
-    getStreamPath(cameraId) {
-        const dir = this.getStreamDirectory(cameraId);
-        const hour = moment().format('HH-mm');
-        return {
-            playlist: path.join(dir, `${hour}-live.m3u8`),
-            segment: path.join(dir, `${hour}-live_%03d.ts`)
-        };
+    getLiveDirectory(cameraId) {
+        return path.join(this.getStreamDirectory(cameraId), 'live');
+    }
+
+    getRecordingsDirectory(cameraId, date = null, hour = null) {
+        let recordingsPath = path.join(this.getStreamDirectory(cameraId), 'recordings');
+        
+        if (date) {
+            recordingsPath = path.join(recordingsPath, date);
+            if (hour) {
+                recordingsPath = path.join(recordingsPath, hour);
+            }
+        }
+        
+        return recordingsPath;
     }
 
     getRtspUrl(cameraId) {
         return config.getRtspUrl(cameraId);
+    }
+
+    // Alias for stopping all streams
+    async stopAll() {
+        return this.stopAllStreams();
+    }
+
+    // Stop a specific camera stream (missing method)
+    async stopCameraStream(cameraId) {
+        logger.info(`Stopping stream for camera ${cameraId}`);
+        await this.stopStream(cameraId);
     }
 }
 

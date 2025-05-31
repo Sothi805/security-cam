@@ -27,20 +27,13 @@ class Config {
         this.rtspPort = parseInt(process.env.RTSP_PORT) || 554;
         
         // Stream settings
-        this.fps = parseInt(process.env.FPS) || 12;
+        this.fps = parseInt(process.env.FPS) || 15;
         this.retentionDays = this.nodeEnv === 'development' ? 
             parseInt(process.env.RETENTION_DAYS_DEV) || 1 :
             parseInt(process.env.RETENTION_DAYS) || 30;
         
         // FFmpeg settings
         this.ffmpegPath = process.env.FFMPEG_PATH || 'ffmpeg';
-        
-        // Quality settings
-        this.lowQuality = {
-            width: parseInt(process.env.LOW_QUALITY_WIDTH) || 854,
-            height: parseInt(process.env.LOW_QUALITY_HEIGHT) || 480,
-            bitrate: process.env.LOW_QUALITY_BITRATE || '1000k'
-        };
         
         // Logging
         this.logLevel = process.env.LOG_LEVEL || (this.isDevelopment() ? 'debug' : 'info');
@@ -108,31 +101,31 @@ class Config {
             public: this.publicPath
         };
 
-        // Create camera directories with proper structure
+        // Create camera directories with new proper structure
         if (this.cameraIds && this.cameraIds.length > 0) {
             for (const cameraId of this.cameraIds) {
-                // Camera base directory
+                // Camera base directory: hls/{camera_id}/
                 const cameraDir = path.join(this.hlsPath, cameraId.toString());
                 fs.ensureDirSync(cameraDir);
                 console.log(`📁 Created camera directory: ${cameraDir}`);
 
-                // Live directory structure
+                // Live directory structure: hls/{camera_id}/live/
                 const liveDir = path.join(cameraDir, 'live');
                 fs.ensureDirSync(liveDir);
                 console.log(`📁 Created live directory: ${liveDir}`);
 
-                // Recordings directory structure
+                // Recordings directory structure: hls/{camera_id}/recordings/
                 const recordingsDir = path.join(cameraDir, 'recordings');
                 fs.ensureDirSync(recordingsDir);
                 console.log(`📁 Created recordings directory: ${recordingsDir}`);
 
-                // Current date directory
+                // Current date directory: hls/{camera_id}/recordings/YYYY-MM-DD/
                 const currentDate = moment().format('YYYY-MM-DD');
                 const dateDir = path.join(recordingsDir, currentDate);
                 fs.ensureDirSync(dateDir);
                 console.log(`📁 Created date directory: ${dateDir}`);
 
-                // Current hour directory
+                // Current hour directory: hls/{camera_id}/recordings/YYYY-MM-DD/HH/
                 const currentHour = moment().format('HH');
                 const hourDir = path.join(dateDir, currentHour);
                 fs.ensureDirSync(hourDir);
@@ -140,92 +133,131 @@ class Config {
             }
         }
 
-        // Remove any stray directories at root level
+        // Clean up any old structure remnants
+        this.cleanupOldStructure();
+    }
+
+    // Clean up old directory structure
+    cleanupOldStructure() {
         try {
             const rootDirs = fs.readdirSync(this.hlsPath);
             for (const dir of rootDirs) {
                 const fullPath = path.join(this.hlsPath, dir);
+                
+                // Remove old root-level live/recordings directories if they exist
                 if (dir === 'live' || dir === 'recordings') {
                     fs.removeSync(fullPath);
-                    console.log(`🗑️ Removed stray directory: ${fullPath}`);
+                    console.log(`🗑️ Removed old root directory: ${fullPath}`);
+                }
+                
+                // Check camera directories for old quality subdirectories
+                if (this.cameraIds.includes(dir)) {
+                    const cameraPath = fullPath;
+                    const livePath = path.join(cameraPath, 'live');
+                    
+                    if (fs.existsSync(livePath)) {
+                        const liveContents = fs.readdirSync(livePath);
+                        
+                        // Remove old quality directories
+                        for (const item of liveContents) {
+                            if (item === 'high' || item === 'low') {
+                                const qualityPath = path.join(livePath, item);
+                                fs.removeSync(qualityPath);
+                                console.log(`🗑️ Removed old quality directory: ${qualityPath}`);
+                            }
+                        }
+                    }
                 }
             }
         } catch (error) {
-            console.error('Error cleaning up stray directories:', error);
+            console.error('Error cleaning up old structure:', error);
         }
     }
 
-    // Path generators for new folder structure: hls/{CAMERA_ID}/{YYYY-MM-DD}/{HH-mm}-live.m3u8
-    getStreamPath(cameraId, date = null, hour = null) {
-        if (!date) date = moment().format('YYYY-MM-DD');
-        if (!hour) hour = moment().format('HH-mm');
-        return path.join(
-            this.hlsPath,
-            cameraId.toString(),
-            date,
-            `${hour}-live.m3u8`
-        );
-    }
-
-    getStreamDirectory(cameraId, date = null) {
-        if (!date) date = moment().format('YYYY-MM-DD');
-        const dir = path.join(this.hlsPath, cameraId.toString(), date);
-        fs.ensureDirSync(dir);
-        return dir;
-    }
-
+    // Get camera base directory
     getCameraDirectory(cameraId) {
         return path.join(this.hlsPath, cameraId.toString());
     }
 
-    // RTSP URL generator
+    // Get live directory for camera
+    getLiveDirectory(cameraId) {
+        return path.join(this.getCameraDirectory(cameraId), 'live');
+    }
+
+    // Get recordings directory for camera
+    getRecordingsDirectory(cameraId, date = null, hour = null) {
+        let recordingsPath = path.join(this.getCameraDirectory(cameraId), 'recordings');
+        
+        if (date) {
+            recordingsPath = path.join(recordingsPath, date);
+            if (hour) {
+                recordingsPath = path.join(recordingsPath, hour);
+            }
+        }
+        
+        return recordingsPath;
+    }
+
+    // RTSP URL generator for Hikvision cameras
     getRtspUrl(cameraId) {
         // URL encode the password to handle special characters
         const encodedPassword = encodeURIComponent(this.rtspPassword);
-        // Hikvision format: /Streaming/Channels/{id}
-        return `rtsp://${this.rtspUser}:${encodedPassword}@${this.rtspHost}:${this.rtspPort}/Streaming/Channels/${cameraId}`;
+        // Hikvision format: /Streaming/Channels/{id}01 (main stream)
+        return `rtsp://${this.rtspUser}:${encodedPassword}@${this.rtspHost}:${this.rtspPort}/Streaming/Channels/${cameraId}01`;
     }
 
-    // Stream URL generators for API responses
-    getStreamUrl(cameraId, date = null, hour = null) {
-        if (!date) date = moment().format('YYYY-MM-DD');
-        if (!hour) hour = moment().format('HH-mm');
-        
-        return `/hls/${cameraId}/${date}/${hour}-live.m3u8`;
-    }
-
-    // Live stream URL (current hour)
+    // Live stream URL (new format)
     getLiveStreamUrl(cameraId) {
         return `/hls/${cameraId}/live/live.m3u8`;
     }
 
+    // Recording stream URL (new format)
+    getRecordingStreamUrl(cameraId, date, hour) {
+        return `/hls/${cameraId}/recordings/${date}/${hour}/playlist.m3u8`;
+    }
+
     // Get available dates for a camera
     getAvailableDates(cameraId) {
-        const cameraDir = this.getCameraDirectory(cameraId);
-        if (!fs.existsSync(cameraDir)) return [];
-        
-        return fs.readdirSync(cameraDir)
-            .filter(item => fs.statSync(path.join(cameraDir, item)).isDirectory())
-            .filter(date => moment(date, 'YYYY-MM-DD').isValid())
-            .sort();
+        try {
+            const recordingsDir = this.getRecordingsDirectory(cameraId);
+            
+            if (!fs.existsSync(recordingsDir)) {
+                return [];
+            }
+
+            const items = fs.readdirSync(recordingsDir);
+            const dates = items.filter(item => {
+                const itemPath = path.join(recordingsDir, item);
+                const stats = fs.statSync(itemPath);
+                return stats.isDirectory() && moment(item, 'YYYY-MM-DD', true).isValid();
+            });
+            
+            return dates.sort().reverse(); // Most recent first
+        } catch (error) {
+            return [];
+        }
     }
 
     // Get available hours for a camera and date
     getAvailableHours(cameraId, date) {
-        const dateDir = this.getStreamDirectory(cameraId, date);
-        if (!fs.existsSync(dateDir)) return [];
-        
-        const hours = new Set();
-        fs.readdirSync(dateDir)
-            .filter(file => file.endsWith('.m3u8'))
-            .forEach(file => {
-                const match = file.match(/^(\d{2}-\d{2})-live\.m3u8$/);
-                if (match) {
-                    hours.add(match[1]);
-                }
-            });
+        try {
+            const dateDir = this.getRecordingsDirectory(cameraId, date);
+            
+            if (!fs.existsSync(dateDir)) {
+                return [];
+            }
 
-        return Array.from(hours).sort();
+            const items = fs.readdirSync(dateDir);
+            const hours = items.filter(item => {
+                const itemPath = path.join(dateDir, item);
+                const stats = fs.statSync(itemPath);
+                return stats.isDirectory() && /^\d{2}$/.test(item);
+            });
+            
+            return hours.sort(); // Chronological order
+        } catch (error) {
+            return [];
+        }
     }
 
     // Environment helpers
@@ -253,8 +285,8 @@ class Config {
                 cameras: this.cameraIds
             },
             retention: `${this.retentionDays || 1} days`,
-            quality: 'Single stream (480p)',
-            fps: this.fps || 12,
+            resolution: '640x360@15fps',
+            fps: this.fps || 15,
             autoRestart: this.autoRestart || false,
             paths: {
                 hls: this.hlsPath || './hls',

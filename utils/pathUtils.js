@@ -13,23 +13,29 @@ class PathUtils {
         await this.ensureBaseDirectories();
     }
 
-    // Ensure all base directories exist
+    // Ensure all base directories exist with new structure
     async ensureBaseDirectories() {
         for (const cameraId of config.cameraIds) {
-            // Ensure live directory
-            await fs.ensureDir(path.join(config.hlsPath, cameraId.toString(), 'live'));
+            // Base camera directory: hls/{camera_id}/
+            const cameraDir = path.join(config.hlsPath, cameraId.toString());
+            await fs.ensureDir(cameraDir);
             
-            // Ensure recordings base directory
-            await fs.ensureDir(path.join(config.hlsPath, cameraId.toString(), 'recordings'));
+            // Live directory: hls/{camera_id}/live/
+            const liveDir = path.join(cameraDir, 'live');
+            await fs.ensureDir(liveDir);
+            
+            // Recordings directory: hls/{camera_id}/recordings/
+            const recordingsDir = path.join(cameraDir, 'recordings');
+            await fs.ensureDir(recordingsDir);
         }
     }
 
-    // Get live directory path for a camera
+    // Get live directory path for a camera: hls/{camera_id}/live/
     getLiveDir(cameraId) {
         return path.join(config.hlsPath, cameraId.toString(), 'live');
     }
 
-    // Get recordings directory path for a camera and date
+    // Get recordings directory path: hls/{camera_id}/recordings/YYYY-MM-DD/HH/
     getRecordingsDir(cameraId, date, hour) {
         return path.join(config.hlsPath, cameraId.toString(), 'recordings', date, hour);
     }
@@ -41,60 +47,60 @@ class PathUtils {
         return recordingDir;
     }
 
-    // Get live segment path
+    // Get live segment path: hls/{camera_id}/live/segment{N}.ts
     getLiveSegmentPath(cameraId, segmentNumber) {
         return path.join(this.getLiveDir(cameraId), `segment${segmentNumber}.ts`);
     }
 
-    // Get recording segment path
+    // Get recording segment path: hls/{camera_id}/recordings/YYYY-MM-DD/HH/{MM}.ts
     getRecordingSegmentPath(cameraId, date, hour, minute) {
         return path.join(this.getRecordingsDir(cameraId, date, hour), `${minute.toString().padStart(2, '0')}.ts`);
     }
 
-    // Get live playlist path
+    // Get live playlist path: hls/{camera_id}/live/live.m3u8
     getLivePlaylistPath(cameraId) {
         return path.join(this.getLiveDir(cameraId), 'live.m3u8');
     }
 
-    // Get recording playlist path
+    // Get recording playlist path: hls/{camera_id}/recordings/YYYY-MM-DD/HH/playlist.m3u8
     getRecordingPlaylistPath(cameraId, date, hour) {
         return path.join(this.getRecordingsDir(cameraId, date, hour), 'playlist.m3u8');
     }
 
-    // Get live stream path (current hour)
-    getLiveStreamPath(cameraId) {
-        const date = moment().format('YYYY-MM-DD');
-        const hour = moment().format('HH-mm');
-        return config.getStreamPath(cameraId, date, hour);
-    }
-
-    // Get historical stream path
-    getHistoricalStreamPath(cameraId, date, hour) {
-        return config.getStreamPath(cameraId, date, hour);
-    }
-
-    // Get web URL for stream
-    getStreamWebUrl(cameraId, date = null, hour = null) {
-        return config.getStreamUrl(cameraId, date, hour);
-    }
-
     // Get live stream web URL
     getLiveStreamWebUrl(cameraId) {
-        return config.getLiveStreamUrl(cameraId);
+        return `/hls/${cameraId}/live/live.m3u8`;
     }
 
-    // Ensure directory exists for a stream path
-    async ensureStreamDirectory(cameraId, date = null) {
-        const streamDir = config.getStreamDirectory(cameraId, date);
-        await fs.ensureDir(streamDir);
-        return streamDir;
+    // Get recording stream web URL
+    getRecordingStreamWebUrl(cameraId, date, hour) {
+        return `/hls/${cameraId}/recordings/${date}/${hour}/playlist.m3u8`;
     }
 
     // Get all available dates for a camera
     async getAvailableDates(cameraId) {
         try {
-            return config.getAvailableDates(cameraId);
+            const recordingsDir = path.join(config.hlsPath, cameraId.toString(), 'recordings');
+            
+            if (!await fs.pathExists(recordingsDir)) {
+                return [];
+            }
+
+            const items = await fs.readdir(recordingsDir);
+            const dates = [];
+            
+            for (const item of items) {
+                const itemPath = path.join(recordingsDir, item);
+                const stats = await fs.stat(itemPath);
+                
+                if (stats.isDirectory() && this.isValidDate(item)) {
+                    dates.push(item);
+                }
+            }
+            
+            return dates.sort().reverse(); // Most recent first
         } catch (error) {
+            logger.error(`Failed to get available dates for camera ${cameraId}:`, error);
             return [];
         }
     }
@@ -102,57 +108,127 @@ class PathUtils {
     // Get all available hours for a camera and date
     async getAvailableHours(cameraId, date) {
         try {
-            return config.getAvailableHours(cameraId, date);
-        } catch (error) {
-            return [];
-        }
-    }
-
-    // Get all available qualities for a specific hour (now always returns single stream)
-    async getAvailableQualities(cameraId, date, hour) {
-        try {
-            const dateDir = config.getStreamDirectory(cameraId, date);
+            const dateDir = path.join(config.hlsPath, cameraId.toString(), 'recordings', date);
+            
             if (!await fs.pathExists(dateDir)) {
                 return [];
             }
 
-            const files = await fs.readdir(dateDir);
-            const liveFile = `${hour}-live.m3u8`;
+            const items = await fs.readdir(dateDir);
+            const hours = [];
             
-            if (files.includes(liveFile)) {
-                return ['live'];
+            for (const item of items) {
+                const itemPath = path.join(dateDir, item);
+                const stats = await fs.stat(itemPath);
+                
+                if (stats.isDirectory() && this.isValidHour(item)) {
+                    // Check if there are actual recordings in this hour
+                    const hourDir = itemPath;
+                    const files = await fs.readdir(hourDir);
+                    const hasRecordings = files.some(f => f.endsWith('.ts') || f.endsWith('.m3u8'));
+                    
+                    if (hasRecordings) {
+                        hours.push(item);
+                    }
+                }
             }
             
-            return [];
+            return hours.sort(); // Chronological order
         } catch (error) {
+            logger.error(`Failed to get available hours for camera ${cameraId} on ${date}:`, error);
             return [];
         }
     }
 
-    // Check if a stream file exists
-    async streamExists(cameraId, date = null, hour = null) {
+    // Check if a live stream exists and is healthy
+    async getLiveStreamHealth(cameraId) {
         try {
-            const streamPath = config.getStreamPath(cameraId, date, hour);
-            return await fs.pathExists(streamPath);
+            const livePlaylist = this.getLivePlaylistPath(cameraId);
+            
+            if (!await fs.pathExists(livePlaylist)) {
+                return {
+                    healthy: false,
+                    error: 'Live playlist not found',
+                    lastCheck: moment().toISOString()
+                };
+            }
+            
+            const stats = await fs.stat(livePlaylist);
+            const age = moment().diff(moment(stats.mtime), 'seconds');
+            
+            // Check for recent segments
+            const liveDir = this.getLiveDir(cameraId);
+            const files = await fs.readdir(liveDir);
+            const segments = files.filter(f => f.endsWith('.ts'));
+            
+            return {
+                healthy: age < 30 && segments.length > 0,
+                lastModified: stats.mtime,
+                ageSeconds: age,
+                segmentCount: segments.length,
+                lastCheck: moment().toISOString()
+            };
+        } catch (error) {
+            return {
+                healthy: false,
+                error: error.message,
+                lastCheck: moment().toISOString()
+            };
+        }
+    }
+
+    // Get stream health information (alias for backward compatibility)
+    async getStreamHealth(cameraId) {
+        return this.getLiveStreamHealth(cameraId);
+    }
+
+    // Check if a recording exists for specific date and hour
+    async recordingExists(cameraId, date, hour) {
+        try {
+            const recordingPlaylist = this.getRecordingPlaylistPath(cameraId, date, hour);
+            return await fs.pathExists(recordingPlaylist);
         } catch (error) {
             return false;
         }
     }
 
-    // Get stream file stats
-    async getStreamStats(cameraId, date = null, hour = null) {
+    // Get recording stats for specific date and hour
+    async getRecordingStats(cameraId, date, hour) {
         try {
-            const streamPath = config.getStreamPath(cameraId, date, hour);
-            if (!await fs.pathExists(streamPath)) {
+            const recordingDir = this.getRecordingsDir(cameraId, date, hour);
+            
+            if (!await fs.pathExists(recordingDir)) {
                 return null;
             }
             
-            const stats = await fs.stat(streamPath);
+            const files = await fs.readdir(recordingDir);
+            const segments = files.filter(f => f.endsWith('.ts'));
+            const playlist = files.find(f => f.endsWith('.m3u8'));
+            
+            let totalSize = 0;
+            let earliestTime = null;
+            let latestTime = null;
+            
+            for (const segment of segments) {
+                const segmentPath = path.join(recordingDir, segment);
+                const stats = await fs.stat(segmentPath);
+                totalSize += stats.size;
+                
+                if (!earliestTime || stats.mtime < earliestTime) {
+                    earliestTime = stats.mtime;
+                }
+                if (!latestTime || stats.mtime > latestTime) {
+                    latestTime = stats.mtime;
+                }
+            }
+            
             return {
-                size: stats.size,
-                created: stats.birthtime,
-                modified: stats.mtime,
-                isStale: (Date.now() - stats.mtime.getTime()) > 60000 // 1 minute
+                segmentCount: segments.length,
+                hasPlaylist: !!playlist,
+                totalSize,
+                earliestTime,
+                latestTime,
+                durationMinutes: segments.length // Roughly, assuming 1 minute per segment
             };
         } catch (error) {
             return null;
@@ -189,130 +265,112 @@ class PathUtils {
     // Get camera storage statistics
     async getCameraStorageStats(cameraId) {
         try {
-            const cameraDir = config.getCameraDirectory(cameraId);
-            const totalSize = await this.getDirectorySize(cameraDir);
+            const cameraDir = path.join(config.hlsPath, cameraId.toString());
+            const liveDir = this.getLiveDir(cameraId);
+            const recordingsDir = path.join(cameraDir, 'recordings');
+            
+            const liveSize = await this.getDirectorySize(liveDir);
+            const recordingsSize = await this.getDirectorySize(recordingsDir);
+            const totalSize = liveSize + recordingsSize;
+            
             const dates = await this.getAvailableDates(cameraId);
             
-            let fileCount = 0;
-            let oldestFile = null;
-            let newestFile = null;
+            let recordingCount = 0;
+            let oldestRecording = null;
+            let newestRecording = null;
             
             for (const date of dates) {
-                const dateDir = config.getStreamDirectory(cameraId, date);
-                const files = await fs.readdir(dateDir);
+                const hours = await this.getAvailableHours(cameraId, date);
+                recordingCount += hours.length;
                 
-                for (const file of files) {
-                    const filePath = path.join(dateDir, file);
-                    const stats = await fs.stat(filePath);
+                if (hours.length > 0) {
+                    const dateTime = moment(date + ' ' + hours[0], 'YYYY-MM-DD HH');
+                    if (!oldestRecording || dateTime.isBefore(oldestRecording)) {
+                        oldestRecording = dateTime;
+                    }
                     
-                    if (stats.isFile()) {
-                        fileCount++;
-                        
-                        if (!oldestFile || stats.mtime < oldestFile) {
-                            oldestFile = stats.mtime;
-                        }
-                        
-                        if (!newestFile || stats.mtime > newestFile) {
-                            newestFile = stats.mtime;
-                        }
+                    const latestDateTime = moment(date + ' ' + hours[hours.length - 1], 'YYYY-MM-DD HH');
+                    if (!newestRecording || latestDateTime.isAfter(newestRecording)) {
+                        newestRecording = latestDateTime;
                     }
                 }
             }
             
             return {
+                cameraId,
                 totalSize,
-                fileCount,
+                liveSize,
+                recordingsSize,
+                recordingCount,
                 dateCount: dates.length,
-                oldestFile: oldestFile ? oldestFile.toISOString() : null,
-                newestFile: newestFile ? newestFile.toISOString() : null,
-                sizeFormatted: this.formatBytes(totalSize)
+                oldestRecording: oldestRecording ? oldestRecording.toISOString() : null,
+                newestRecording: newestRecording ? newestRecording.toISOString() : null,
+                formattedSize: this.formatBytes(totalSize)
             };
-            
         } catch (error) {
-            return {
-                totalSize: 0,
-                fileCount: 0,
-                dateCount: 0,
-                oldestFile: null,
-                newestFile: null,
-                sizeFormatted: '0 B',
-                error: error.message
-            };
+            logger.error(`Failed to get storage stats for camera ${cameraId}:`, error);
+            return null;
         }
     }
 
     // Get overall storage statistics
     async getOverallStorageStats() {
         try {
-            const totalSize = await this.getDirectorySize(config.hlsPath);
             const stats = {
-                totalSize,
-                sizeFormatted: this.formatBytes(totalSize),
-                cameras: {}
+                totalSize: 0,
+                totalLiveSize: 0,
+                totalRecordingsSize: 0,
+                totalRecordingCount: 0,
+                cameras: [],
+                formattedTotalSize: ''
             };
             
             for (const cameraId of config.cameraIds) {
-                stats.cameras[cameraId] = await this.getCameraStorageStats(cameraId);
+                const cameraStats = await this.getCameraStorageStats(cameraId);
+                if (cameraStats) {
+                    stats.totalSize += cameraStats.totalSize;
+                    stats.totalLiveSize += cameraStats.liveSize;
+                    stats.totalRecordingsSize += cameraStats.recordingsSize;
+                    stats.totalRecordingCount += cameraStats.recordingCount;
+                    stats.cameras.push(cameraStats);
+                }
             }
             
+            stats.formattedTotalSize = this.formatBytes(stats.totalSize);
             return stats;
         } catch (error) {
-            return {
-                totalSize: 0,
-                sizeFormatted: '0 B',
-                cameras: {},
-                error: error.message
-            };
+            logger.error('Failed to get overall storage stats:', error);
+            return null;
         }
     }
 
     // Format bytes to human readable format
     formatBytes(bytes) {
-        if (bytes === 0) return '0 B';
+        if (bytes === 0) return '0 Bytes';
         
         const k = 1024;
-        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         
         return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     }
 
-    // Get stream playlist content for a specific time
-    async getPlaylistContent(cameraId, date, hour) {
-        try {
-            const streamPath = config.getStreamPath(cameraId, date, hour);
-            
-            if (!await fs.pathExists(streamPath)) {
-                return null;
-            }
-            
-            const content = await fs.readFile(streamPath, 'utf8');
-            return content;
-        } catch (error) {
-            return null;
-        }
-    }
-
-    // Build time range for playback
+    // Build time range URLs for playback
     buildTimeRange(startDate, startHour, endDate, endHour) {
-        const range = [];
+        const urls = [];
+        let current = moment(`${startDate} ${startHour}`, 'YYYY-MM-DD HH');
+        const end = moment(`${endDate} ${endHour}`, 'YYYY-MM-DD HH');
         
-        const start = moment(`${startDate} ${startHour}:00`, 'YYYY-MM-DD HH:mm');
-        const end = moment(`${endDate} ${endHour}:59`, 'YYYY-MM-DD HH:mm');
-        
-        let current = start.clone();
-        
-        while (current.isSameOrBefore(end, 'hour')) {
-            range.push({
+        while (current.isSameOrBefore(end)) {
+            urls.push({
                 date: current.format('YYYY-MM-DD'),
-                hour: current.format('HH-mm'),
+                hour: current.format('HH'),
                 timestamp: current.toISOString()
             });
-            
             current.add(1, 'hour');
         }
         
-        return range;
+        return urls;
     }
 
     // Get playback URLs for a time range
@@ -321,12 +379,12 @@ class PathUtils {
         const urls = [];
         
         for (const timePoint of timeRange) {
-            const exists = await this.streamExists(cameraId, timePoint.date, timePoint.hour);
+            const exists = await this.recordingExists(cameraId, timePoint.date, timePoint.hour);
             
             if (exists) {
                 urls.push({
                     ...timePoint,
-                    url: this.getStreamWebUrl(cameraId, timePoint.date, timePoint.hour),
+                    url: this.getRecordingStreamWebUrl(cameraId, timePoint.date, timePoint.hour),
                     available: true
                 });
             } else {
@@ -346,14 +404,14 @@ class PathUtils {
         return config.cameraIds.includes(cameraId.toString());
     }
 
-    // Validate date format
+    // Validate date format (YYYY-MM-DD)
     isValidDate(date) {
         return moment(date, 'YYYY-MM-DD', true).isValid();
     }
 
-    // Validate hour format
+    // Validate hour format (HH)
     isValidHour(hour) {
-        return /^\d{2}-\d{2}$/.test(hour);
+        return /^\d{2}$/.test(hour) && parseInt(hour) >= 0 && parseInt(hour) <= 23;
     }
 
     // Get recent hours (for dashboard)
@@ -364,7 +422,7 @@ class PathUtils {
         for (let i = 0; i < count; i++) {
             hours.push({
                 date: current.format('YYYY-MM-DD'),
-                hour: current.format('HH-mm'),
+                hour: current.format('HH'),
                 timestamp: current.toISOString(),
                 label: current.format('MMM DD, HH:mm')
             });
@@ -375,121 +433,50 @@ class PathUtils {
         return hours;
     }
 
-    // Get stream health information
-    async getStreamHealth(cameraId) {
+    // Clean up empty directories
+    async cleanupEmptyDirectories(cameraId) {
         try {
-            const streamPath = config.getStreamPath(cameraId);
-            const streamDir = path.dirname(streamPath);
+            const recordingsDir = path.join(config.hlsPath, cameraId.toString(), 'recordings');
             
-            // Check if stream directory exists
-            if (!await fs.pathExists(streamDir)) {
-                return {
-                    healthy: false,
-                    error: 'Stream directory not found',
-                    lastCheck: moment().toISOString()
-                };
+            if (!await fs.pathExists(recordingsDir)) {
+                return;
             }
             
-            // Check if m3u8 playlist exists
-            if (!await fs.pathExists(streamPath)) {
-                return {
-                    healthy: false,
-                    error: 'Stream playlist not found',
-                    lastCheck: moment().toISOString()
-                };
-            }
+            const dates = await fs.readdir(recordingsDir);
             
-            // Read and parse m3u8 playlist
-            const playlist = await fs.readFile(streamPath, 'utf8');
-            const segments = playlist
-                .split('\n')
-                .filter(line => line.endsWith('.ts'))
-                .map(line => path.join(streamDir, line));
+            for (const date of dates) {
+                const dateDir = path.join(recordingsDir, date);
+                const hours = await fs.readdir(dateDir);
                 
-            if (segments.length === 0) {
-                return {
-                    healthy: false,
-                    error: 'No segments found in playlist',
-                    lastCheck: moment().toISOString()
-                };
-            }
-            
-            // Check if segments exist and are readable
-            const segmentChecks = await Promise.all(
-                segments.map(async segment => {
-                    try {
-                        const stats = await fs.stat(segment);
-                        const age = moment().diff(moment(stats.mtime), 'seconds');
-                        return {
-                            exists: true,
-                            size: stats.size,
-                            age,
-                            valid: stats.size > 0 && age < 30 // Segment should be non-empty and less than 30 seconds old
-                        };
-                    } catch (error) {
-                        return { exists: false, error: error.message };
+                // Remove empty hour directories
+                for (const hour of hours) {
+                    const hourDir = path.join(dateDir, hour);
+                    const files = await fs.readdir(hourDir);
+                    
+                    if (files.length === 0) {
+                        await fs.remove(hourDir);
+                        logger.debug(`Removed empty hour directory: ${hourDir}`);
                     }
-                })
-            );
-            
-            const validSegments = segmentChecks.filter(check => check.exists && check.valid);
-            const totalSegments = segments.length;
-            const healthRatio = validSegments.length / totalSegments;
-            
-            return {
-                healthy: healthRatio >= 0.7, // At least 70% of segments should be valid
-                segmentCount: totalSegments,
-                validSegments: validSegments.length,
-                healthRatio: Math.round(healthRatio * 100) / 100,
-                details: {
-                    playlist: {
-                        exists: true,
-                        path: streamPath
-                    },
-                    segments: segmentChecks
-                },
-                lastCheck: moment().toISOString()
-            };
+                }
+                
+                // Remove empty date directories
+                const remainingHours = await fs.readdir(dateDir);
+                if (remainingHours.length === 0) {
+                    await fs.remove(dateDir);
+                    logger.debug(`Removed empty date directory: ${dateDir}`);
+                }
+            }
         } catch (error) {
-            logger.error(`Failed to check stream health for camera ${cameraId}:`, error);
-            return {
-                healthy: false,
-                error: error.message,
-                lastCheck: moment().toISOString()
-            };
+            logger.error(`Failed to cleanup empty directories for camera ${cameraId}:`, error);
         }
     }
 
-    // Clean up specific stream files
-    async cleanupStreamFiles(cameraId, date, hour) {
-        try {
-            const streamPath = config.getStreamPath(cameraId, date, hour);
-            const streamDir = path.dirname(streamPath);
-            
-            // Remove playlist file
-            if (await fs.pathExists(streamPath)) {
-                await fs.remove(streamPath);
-            }
-            
-            // Remove associated segment files
-            if (await fs.pathExists(streamDir)) {
-                const files = await fs.readdir(streamDir);
-                const prefix = `${hour}-live_`;
-                
-                for (const file of files) {
-                    if (file.startsWith(prefix) && file.endsWith('.ts')) {
-                        await fs.remove(path.join(streamDir, file));
-                    }
-                }
-            }
-            
-            return true;
-        } catch (error) {
-            return false;
+    // Cleanup all empty directories
+    async cleanupAllEmptyDirectories() {
+        for (const cameraId of config.cameraIds) {
+            await this.cleanupEmptyDirectories(cameraId);
         }
     }
 }
 
-module.exports = {
-    PathUtils
-}; 
+module.exports = { PathUtils }; 

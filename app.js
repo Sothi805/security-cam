@@ -115,7 +115,7 @@ class CCTVStreamingApp {
         const streamRoutes = require('./routes/stream');
         const systemRoutes = require('./routes/system');
         
-        // API routes (with /api prefix)
+        // API routes (with /api prefix) - MAIN ROUTES
         this.app.use('/api/streams', streamRoutes);
         this.app.use('/api/system', systemRoutes);
         
@@ -133,10 +133,6 @@ class CCTVStreamingApp {
                 res.status(400).json({ error: error.message });
             }
         });
-        
-        // Direct routes (without /api prefix for backward compatibility)
-        this.app.use('/streams', streamRoutes);
-        this.app.use('/system', systemRoutes);
         
         // Health check endpoint
         this.app.get('/health', (req, res) => {
@@ -301,10 +297,15 @@ class CCTVStreamingApp {
             '',
             '📺 Stream URLs:',
             ...config.cameraIds.map(id => 
-                `   Camera ${id}: http://${config.host}:${config.port}/hls/${id}/[date]/[hour]-live.m3u8`
+                `   Camera ${id}: http://${config.host}:${config.port}/hls/${id}/live/live.m3u8`
             ),
             '',
-            '🎛️  Available Qualities: low (480p)',
+            '📹 Playback URLs:',
+            ...config.cameraIds.map(id => 
+                `   Camera ${id}: http://${config.host}:${config.port}/hls/${id}/recordings/YYYY-MM-DD/HH/playlist.m3u8`
+            ),
+            '',
+            `🎛️  Resolution: 640x360 (15fps)`,
             `🗄️  Retention: ${config.retentionDays} days`,
             `🔧 Environment: ${config.nodeEnv}`,
             '='.repeat(60),

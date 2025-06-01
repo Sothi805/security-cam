@@ -162,8 +162,8 @@
           <span id="systemStatus">
             <span class="status-indicator status-live"></span> System Online
           </span>
+          </div>
         </div>
-      </div>
     </nav>
 
     <div class="container mt-4">
@@ -178,8 +178,8 @@
                 <i class="fas fa-exclamation-triangle"></i>
                 <p>Stream connection lost. Reconnecting...</p>
                 <div class="loading-spinner"></div>
-              </div>
-            </div>
+        </div>
+        </div>
             <div class="controls">
               <button class="btn btn-custom" onclick="toggleMute()">
                 <i id="muteIcon" class="fas fa-volume-mute"></i>
@@ -192,9 +192,9 @@
                   <span class="status-indicator status-live"></span> Live
                 </span>
               </span>
-            </div>
-          </div>
         </div>
+        </div>
+      </div>
 
         <!-- Recordings Section -->
         <div class="col-lg-4">
@@ -202,14 +202,14 @@
             <h4><i class="fas fa-history"></i> Recordings</h4>
             <div class="mb-3">
               <input type="date" class="date-picker" id="recordingDate" onchange="loadRecordings()">
-            </div>
+      </div>
             <div class="recordings-list" id="recordingsList">
               <!-- Recordings will be loaded here -->
-            </div>
-          </div>
-        </div>
       </div>
-
+    </div>
+              </div>
+            </div>
+            
       <!-- Playback Section -->
       <div class="row mt-4">
         <div class="col-12">
@@ -217,21 +217,21 @@
             <h4><i class="fas fa-play-circle"></i> Playback</h4>
             <div class="video-container">
               <video id="playbackVideo" controls></video>
-            </div>
+              </div>
             <div class="controls">
               <button class="btn btn-custom" onclick="previousHour()">
                 <i class="fas fa-step-backward"></i>
               </button>
               <button class="btn btn-custom" onclick="nextHour()">
                 <i class="fas fa-step-forward"></i>
-              </button>
+                </button>
               <span class="float-end" id="playbackTime"></span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
+              </div>
+              </div>
+              </div>
+                </div>
+              </div>
+              
     <script>
       // Initialize HLS.js
       const liveVideo = document.getElementById('liveVideo');
@@ -255,15 +255,15 @@
 
           // Error handling
           livehls.on(Hls.Events.ERROR, (event, data) => {
-            if (data.fatal) {
+          if (data.fatal) {
               showStreamError(true);
               setTimeout(() => {
                 livehls.loadSource(liveUrl);
                 livehls.attachMedia(liveVideo);
               }, 2000);
-            }
-          });
-        }
+          }
+        });
+      }
       }
 
       // Load recordings for selected date
@@ -317,7 +317,7 @@
       function toggleFullscreen() {
         if (!document.fullscreenElement) {
           liveVideo.requestFullscreen();
-        } else {
+              } else {
           document.exitFullscreen();
         }
       }

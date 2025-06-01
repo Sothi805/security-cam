@@ -4,7 +4,7 @@ const path = require('path');
 const moment = require('moment');
 const config = require('./config');
 const { logger } = require('./logger');
-const { PathUtils } = require('./pathUtils');
+const pathUtils = require('./pathUtils');
 
 class StreamManager {
     constructor() {
@@ -15,12 +15,11 @@ class StreamManager {
         this.retentionDays = process.env.NODE_ENV === 'production' ? 30 : 1;
         this.setupHourlyRotation();
         this.setupRetentionCleanup();
-        this.pathUtils = new PathUtils();
         this.init();
     }
 
     async init() {
-        await this.pathUtils.init();
+        await pathUtils.init();
         // Clean up old structure and ensure new structure
         await this.migrateToNewStructure();
     }
@@ -83,28 +82,8 @@ class StreamManager {
 
     // Ensure all required directories exist with new structure
     async ensureCameraDirectories(cameraId) {
-        // Base camera directory: hls/{camera_id}/
-        const cameraDir = path.join(config.paths.hls, cameraId.toString());
-        await fs.ensureDir(cameraDir);
-
-        // Live directory: hls/{camera_id}/live/
-        const liveDir = path.join(cameraDir, 'live');
-        await fs.ensureDir(liveDir);
-        
-        // Recordings directory: hls/{camera_id}/recordings/
-        const recordingsBaseDir = path.join(cameraDir, 'recordings');
-        await fs.ensureDir(recordingsBaseDir);
-        
-        // Current date and hour directories: hls/{camera_id}/recordings/YYYY-MM-DD/HH/
-        const date = moment().format('YYYY-MM-DD');
-        const hour = moment().format('HH');
-        const recordingsDir = path.join(recordingsBaseDir, date, hour);
-        await fs.ensureDir(recordingsDir);
-        
-        logger.debug(`✅ Directory structure ensured for camera ${cameraId}:`);
-        logger.debug(`   📁 ${cameraDir}`);
-        logger.debug(`   📁 ${liveDir}`);
-        logger.debug(`   📁 ${recordingsDir}`);
+        // Use pathUtils for directory operations
+        await pathUtils.ensureCameraStructure(cameraId);
     }
 
     // Get FFmpeg command for live streaming

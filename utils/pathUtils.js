@@ -466,4 +466,5 @@ class PathUtils {
     }
 }
 
+// Export a singleton instance instead of the class
 module.exports = new PathUtils(); 

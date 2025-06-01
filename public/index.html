@@ -3,1538 +3,357 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>CCTV Moritoring Dashboard</title>
-    <link rel="stylesheet" href="/css/dashboard.css" />
+    <title>Security Camera System</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="css/style.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <style>
-      * {
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
+      :root {
+        --primary-color: #2c3e50;
+        --secondary-color: #34495e;
+        --accent-color: #3498db;
+        --text-color: #ecf0f1;
+        --danger-color: #e74c3c;
+        --success-color: #2ecc71;
       }
 
       body {
-        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-        background-color: #0f1419;
-        color: #ffffff;
-        overflow-x: auto;
+        background-color: var(--primary-color);
+        color: var(--text-color);
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       }
 
-      .header {
-        background: linear-gradient(135deg, #1e293b, #334155);
-        padding: 20px;
-        border-bottom: 2px solid #ef4444;
-        position: sticky;
-        top: 0;
-        z-index: 100;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      .navbar {
+        background-color: var(--secondary-color);
+        padding: 1rem;
       }
 
-      .header h1 {
-        color: #ef4444;
-        font-size: 2rem;
-        margin-bottom: 8px;
-        display: flex;
-        align-items: center;
-        gap: 12px;
-      }
-
-      .header-info {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 20px;
-      }
-
-      .status-indicator {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 8px 16px;
-        background-color: rgba(255, 255, 255, 0.1);
-        border-radius: 6px;
-        font-size: 0.9rem;
-      }
-
-      .status-dot {
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        animation: pulse 2s infinite;
-      }
-
-      .status-dot.online {
-        background-color: #10b981;
-      }
-      .status-dot.offline {
-        background-color: #ef4444;
-      }
-      .status-dot.warning {
-        background-color: #f59e0b;
-      }
-
-      @keyframes pulse {
-        0%,
-        100% {
-          opacity: 1;
-        }
-        50% {
-          opacity: 0.5;
-        }
-      }
-
-      .container {
-        max-width: 1400px;
-        margin: 0 auto;
-        padding: 20px;
-      }
-
-      .system-metrics {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 20px;
-        margin-bottom: 30px;
-        background: linear-gradient(135deg, #1e293b, #334155);
-        padding: 20px;
-        border-radius: 12px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-      }
-
-      .metric-card {
-        background: rgba(0, 0, 0, 0.2);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 8px;
-        padding: 15px;
-        text-align: center;
-        transition: all 0.3s ease;
-      }
-
-      .metric-card:hover {
-        background: rgba(239, 68, 68, 0.1);
-        border-color: #ef4444;
-      }
-
-      .metric-value {
-        font-size: 1.8rem;
-        font-weight: bold;
-        color: #ef4444;
-        margin-bottom: 8px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 8px;
-      }
-
-      .metric-value svg {
-        width: 24px;
-        height: 24px;
-        opacity: 0.8;
-      }
-
-      .metric-label {
-        color: #94a3b8;
-        font-size: 0.9rem;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-      }
-
-      .cameras-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-        gap: 25px;
-      }
-
-      .camera-card {
-        background: linear-gradient(135deg, #1e293b, #334155);
-        border: 1px solid #475569;
-        border-radius: 16px;
-        overflow: hidden;
-        transition: all 0.3s ease;
-        position: relative;
-      }
-
-      .camera-card:hover {
-        border-color: #ef4444;
-        box-shadow: 0 12px 30px rgba(239, 68, 68, 0.3);
-        transform: translateY(-2px);
-      }
-
-      .camera-header {
-        background: linear-gradient(90deg, #ef4444, #dc2626);
-        padding: 15px 20px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-      }
-
-      .camera-id {
-        font-size: 1.2rem;
-        font-weight: bold;
-        color: white;
-      }
-
-      .camera-status {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 6px 12px;
-        background-color: rgba(255, 255, 255, 0.2);
-        border-radius: 20px;
-        font-size: 0.8rem;
+      .stream-container {
+        background-color: var(--secondary-color);
+        border-radius: 10px;
+        padding: 1rem;
+        margin: 1rem 0;
       }
 
       .video-container {
         position: relative;
-        aspect-ratio: 16/9;
+        width: 100%;
+        padding-bottom: 56.25%; /* 16:9 aspect ratio */
         background-color: #000;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        border-radius: 5px;
+        overflow: hidden;
       }
 
-      .video-player {
+      .video-container video {
+        position: absolute;
+        top: 0;
+        left: 0;
         width: 100%;
         height: 100%;
-        object-fit: cover;
+        object-fit: contain;
       }
 
-      .video-overlay {
-        position: absolute;
-        top: 10px;
-        left: 10px;
-        background-color: rgba(0, 0, 0, 0.8);
-        padding: 6px 12px;
-        border-radius: 6px;
-        font-size: 0.8rem;
-        color: white;
+      .controls {
+        margin-top: 1rem;
+        padding: 1rem;
+        background-color: rgba(0, 0, 0, 0.2);
+        border-radius: 5px;
       }
 
-      .video-placeholder {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 12px;
-        color: #6b7280;
-      }
-
-      .video-placeholder svg {
-        width: 64px;
-        height: 64px;
-      }
-
-      .camera-info {
-        padding: 20px;
-      }
-
-      .info-grid {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 15px;
-        margin-bottom: 15px;
-      }
-
-      .info-item {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-      }
-
-      .info-label {
-        color: #94a3b8;
-        font-size: 0.8rem;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-      }
-
-      .info-value {
-        color: #ffffff;
-        font-weight: 500;
-      }
-
-      .quality-badges {
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-      }
-
-      .quality-badge {
-        padding: 4px 10px;
-        border-radius: 12px;
-        font-size: 0.75rem;
-        font-weight: 500;
-        text-transform: uppercase;
-      }
-
-      .quality-badge.available {
-        background-color: #10b981;
-        color: white;
-      }
-
-      .quality-badge.unavailable {
-        background-color: #6b7280;
-        color: #d1d5db;
-      }
-
-      .camera-actions {
-        display: flex;
-        gap: 8px;
-        margin-top: 15px;
-      }
-
-      .action-btn {
-        padding: 8px 16px;
+      .btn-custom {
+        background-color: var(--accent-color);
+        color: var(--text-color);
         border: none;
-        border-radius: 6px;
-        cursor: pointer;
-        font-size: 0.8rem;
-        font-weight: 500;
-        transition: all 0.2s ease;
-        flex: 1;
+        padding: 0.5rem 1rem;
+        border-radius: 5px;
+        transition: all 0.3s ease;
       }
 
-      .action-btn.restart {
-        background-color: #f59e0b;
-        color: white;
+      .btn-custom:hover {
+        background-color: #2980b9;
+        transform: translateY(-2px);
       }
 
-      .action-btn.restart:hover {
-        background-color: #d97706;
-      }
-
-      .action-btn.fullscreen {
-        background-color: #3b82f6;
-        color: white;
-      }
-
-      .action-btn.fullscreen:hover {
-        background-color: #2563eb;
-      }
-
-      .loading {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 10px;
-        color: #6b7280;
-      }
-
-      .spinner {
-        width: 20px;
-        height: 20px;
-        border: 2px solid #374151;
-        border-top: 2px solid #ef4444;
+      .status-indicator {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
         border-radius: 50%;
-        animation: spin 1s linear infinite;
+        margin-right: 5px;
       }
 
-      @keyframes spin {
-        0% {
-          transform: rotate(0deg);
-        }
-        100% {
-          transform: rotate(360deg);
-        }
+      .status-live {
+        background-color: var(--success-color);
+        animation: pulse 2s infinite;
       }
 
-      .error-message {
-        background-color: #fee2e2;
-        border: 1px solid #fca5a5;
-        color: #dc2626;
-        padding: 15px;
-        border-radius: 8px;
-        margin: 20px 0;
-        text-align: center;
+      .status-offline {
+        background-color: var(--danger-color);
       }
 
-      .timestamp {
-        color: #6b7280;
-        font-size: 0.8rem;
-        text-align: center;
-        margin-top: 20px;
+      .recordings-list {
+        max-height: 400px;
+        overflow-y: auto;
+        padding: 1rem;
+        background-color: rgba(0, 0, 0, 0.2);
+        border-radius: 5px;
       }
 
-      @media (max-width: 768px) {
-        .cameras-grid {
-          grid-template-columns: 1fr;
-        }
-
-        .system-metrics {
-          grid-template-columns: repeat(2, 1fr);
-        }
-
-        .header h1 {
-          font-size: 1.5rem;
-        }
-
-        .info-grid {
-          grid-template-columns: 1fr;
-        }
+      .recording-item {
+        padding: 0.5rem;
+        margin: 0.25rem 0;
+        background-color: rgba(255, 255, 255, 0.1);
+        border-radius: 3px;
+        cursor: pointer;
+        transition: all 0.2s ease;
       }
 
-      /* HLS.js specific styles */
-      .hls-loading {
+      .recording-item:hover {
+        background-color: rgba(255, 255, 255, 0.2);
+      }
+
+      .date-picker {
+        background-color: var(--secondary-color);
+        border: 1px solid var(--accent-color);
+        color: var(--text-color);
+        padding: 0.5rem;
+        border-radius: 5px;
+      }
+
+      @keyframes pulse {
+        0% { opacity: 1; }
+        50% { opacity: 0.5; }
+        100% { opacity: 1; }
+      }
+
+      .stream-error {
         position: absolute;
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%);
-        z-index: 10;
-      }
-
-      .quality-selector {
-        position: absolute;
-        bottom: 60px;
-        right: 10px;
-        background-color: rgba(0, 0, 0, 0.8);
-        padding: 6px;
-        border-radius: 6px;
-        z-index: 10;
-        display: flex;
-        gap: 8px;
-      }
-
-      .quality-btn {
-        padding: 4px 8px;
-        border: none;
-        border-radius: 4px;
-        background: transparent;
-        color: #fff;
-        cursor: pointer;
-        font-size: 0.8rem;
-        transition: all 0.2s;
-      }
-
-      .quality-btn.active {
-        background-color: #ef4444;
-      }
-
-      .quality-btn:hover {
-        background-color: rgba(239, 68, 68, 0.5);
-      }
-
-      .playback-controls {
-        position: absolute;
-        bottom: 10px;
-        left: 50%;
-        transform: translateX(-50%);
-        background-color: rgba(0, 0, 0, 0.8);
-        padding: 8px;
-        border-radius: 6px;
-        z-index: 10;
-        display: flex;
-        gap: 12px;
-        align-items: center;
-      }
-
-      .playback-btn {
-        background: transparent;
-        border: none;
-        color: white;
-        cursor: pointer;
-        padding: 4px;
-        border-radius: 4px;
-        transition: all 0.2s;
-      }
-
-      .playback-btn:hover {
-        background-color: rgba(255, 255, 255, 0.1);
-      }
-
-      .playback-btn svg {
-        width: 24px;
-        height: 24px;
-      }
-
-      .time-display {
-        color: white;
-        font-size: 0.8rem;
-        min-width: 80px;
         text-align: center;
+        color: var(--danger-color);
       }
 
-      .progress-bar {
-        position: absolute;
-        bottom: 0;
-        left: 0;
-        width: 100%;
-        height: 4px;
-        background-color: rgba(255, 255, 255, 0.2);
-        cursor: pointer;
-      }
-
-      .progress-bar-fill {
-        height: 100%;
-        background-color: #ef4444;
-        width: 0%;
-        transition: width 0.1s linear;
-      }
-
-      .history-panel {
-        background: rgba(0, 0, 0, 0.95);
-        position: absolute;
-        top: 0;
-        right: -320px;
-        width: 320px;
-        height: 100%;
-        transition: right 0.3s ease;
-        z-index: 25;
-        padding: 20px;
-        color: white;
-        overflow-y: auto;
-        box-shadow: -2px 0 10px rgba(0, 0, 0, 0.5);
-      }
-
-      .history-panel.open {
-        right: 0;
-      }
-
-      .history-toggle {
-        position: absolute;
-        top: 10px;
-        right: 10px;
-        background: rgba(0, 0, 0, 0.8);
-        border: none;
-        color: white;
-        padding: 8px;
-        border-radius: 4px;
-        cursor: pointer;
-        z-index: 30;
-      }
-
-      .history-toggle svg {
-        width: 24px;
-        height: 24px;
-      }
-
-      .date-selector {
-        margin-bottom: 20px;
-      }
-
-      .date-selector select {
-        width: 100%;
-        padding: 8px;
-        background: #1e293b;
-        border: 1px solid #475569;
-        color: white;
-        border-radius: 4px;
-        margin-top: 4px;
-      }
-
-      .hour-grid {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 8px;
-        margin-top: 10px;
-      }
-
-      .hour-btn {
-        padding: 8px;
-        background: #1e293b;
-        border: 1px solid #475569;
-        color: white;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 0.8rem;
-        transition: all 0.2s;
-      }
-
-      .hour-btn:hover {
-        border-color: #ef4444;
-      }
-
-      .hour-btn.available {
-        background: #374151;
-      }
-
-      .hour-btn.selected {
-        background: #ef4444;
-        border-color: #ef4444;
-      }
-
-      .no-recordings {
-        text-align: center;
-        color: #94a3b8;
-        margin-top: 20px;
-        font-size: 0.9rem;
-      }
-
-      .jump-to-live {
-        background-color: #ef4444;
-        color: white;
-        border: none;
-        padding: 4px 12px;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 0.8rem;
-        display: none; /* Hidden by default */
-        animation: pulse 2s infinite;
-      }
-
-      .jump-to-live.visible {
-        display: block;
-      }
-
-      @keyframes pulse {
-        0%,
-        100% {
-          opacity: 1;
-        }
-        50% {
-          opacity: 0.7;
-        }
-      }
-
-      .live-indicator {
-        position: absolute;
-        right: 50px;
-        top: 10px;
-        background-color: rgba(0, 0, 0, 0.8);
-        padding: 6px 12px;
-        border-radius: 4px;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        cursor: pointer;
-        z-index: 20;
-        transition: all 0.3s ease;
-      }
-
-      .live-indicator.behind {
-        opacity: 0.6;
-      }
-
-      .live-indicator:hover {
-        background-color: #ef4444;
-      }
-
-      .live-dot {
-        width: 8px;
-        height: 8px;
-        background-color: #ef4444;
+      .loading-spinner {
+        border: 4px solid rgba(255, 255, 255, 0.3);
+        border-top: 4px solid var(--accent-color);
         border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 20px auto;
       }
 
-      .live-indicator.behind .live-dot {
-        background-color: #6b7280;
-      }
-
-      .live-text {
-        color: white;
-        font-size: 12px;
-        font-weight: bold;
-        text-transform: uppercase;
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
       }
     </style>
   </head>
   <body>
-    <div class="header">
-      <div class="header-info">
-        <div>
-          <h1>
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
-              <path
-                d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"
-              />
-            </svg>
-            CCTV Monitoring Dashboard
-          </h1>
-          <div class="status-indicator">
-            <div class="status-dot online" id="connectionStatus"></div>
-            <span id="connectionText">Connected</span>
-          </div>
-        </div>
-        <div class="header-status">
-          <div class="status-indicator">
-            <span>Last Update: <span id="lastUpdate">--:--:--</span></span>
-          </div>
-          <div class="status-indicator">
-            <span>Active Cameras: <span id="activeCameraCount">0</span></span>
-          </div>
+    <nav class="navbar">
+      <div class="container">
+        <span class="navbar-brand">
+          <i class="fas fa-video"></i> Security Camera System
+        </span>
+        <div class="navbar-text">
+          <span id="systemStatus">
+            <span class="status-indicator status-live"></span> System Online
+          </span>
         </div>
       </div>
-    </div>
+    </nav>
 
-    <div class="container">
-      <!-- System Metrics -->
-      <div class="system-metrics" id="systemMetrics">
-        <div class="metric-card">
-          <div class="metric-value" id="cpuUsage">--</div>
-          <div class="metric-label">CPU Usage</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-value" id="memoryUsage">--</div>
-          <div class="metric-label">Memory Usage</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-value" id="diskUsage">--</div>
-          <div class="metric-label">Disk Usage</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-value" id="ffmpegProcesses">--</div>
-          <div class="metric-label">FFmpeg Processes</div>
-        </div>
-      </div>
-
-      <!-- Loading State -->
-      <div id="loadingState" class="loading">
-        <div class="spinner"></div>
-        <span>Loading cameras...</span>
-      </div>
-
-      <!-- Error State -->
-      <div id="errorState" class="error-message" style="display: none">
-        <strong>Connection Error:</strong>
-        <div id="errorMessage">Unable to connect to CCTV server</div>
-        <button onclick="loadDashboard()" class="error-retry-btn">
-          Retry Connection
-        </button>
-      </div>
-
-      <!-- Cameras Grid -->
-      <div class="cameras-grid" id="camerasGrid"></div>
-
-      <div class="timestamp">Dashboard Auto-refreshes every 15 seconds</div>
-    </div>
-
-    <!-- HLS.js Library -->
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js.map"></script>
-
-    <script>
-      // Configuration
-      const API_BASE_URL = window.location.origin;
-      const REFRESH_INTERVAL = 15000; // 15 seconds
-      const CAMERA_IDS = ["102"]; // Focus on the configured camera
-
-      // Add debug logging
-      const DEBUG = true;
-      function log(...args) {
-        if (DEBUG) console.log("[CCTV Debug]", ...args);
-      }
-
-      let refreshTimer;
-      let hlsPlayers = new Map();
-
-      // Initialize dashboard
-      document.addEventListener("DOMContentLoaded", function () {
-        loadDashboard();
-        startAutoRefresh();
-      });
-
-      // Auto-refresh functionality
-      function startAutoRefresh() {
-        if (refreshTimer) clearInterval(refreshTimer);
-        refreshTimer = setInterval(() => {
-          loadDashboard();
-        }, REFRESH_INTERVAL);
-      }
-
-      // Main dashboard loading function
-      async function loadDashboard() {
-        updateLastUpdateTime();
-
-        try {
-          log("Loading dashboard...");
-          // Load system metrics and cameras in parallel
-          const [systemData, camerasData] = await Promise.all([
-            loadSystemMetrics(),
-            loadCameras()
-          ]);
-
-          log("Dashboard data loaded:", { systemData, camerasData });
-
-          updateConnectionStatus(true);
-          updateSystemMetrics(systemData);
-          updateCamerasGrid(camerasData);
-          hideError();
-        } catch (error) {
-          console.error("Dashboard load error:", error);
-          updateConnectionStatus(false);
-          showError(error.message);
-        }
-      }
-
-      // Load system metrics
-      async function loadSystemMetrics() {
-        try {
-          const response = await fetch(`${API_BASE_URL}/api/system/metrics`);
-
-          if (!response.ok) {
-            throw new Error(`Failed to load metrics: ${response.status}`);
-          }
-
-          const data = await response.json();
-          return data;
-        } catch (error) {
-          console.error("Failed to load system metrics:", error);
-          throw error;
-        }
-      }
-
-      // Load cameras data
-      async function loadCameras() {
-        const response = await fetch(`${API_BASE_URL}/api/streams/cameras`);
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        const data = await response.json();
-        return data.cameras || [];
-      }
-
-      // Update system metrics display
-      function updateSystemMetrics(data) {
-        // CPU Usage
-        const cpuElement = document.getElementById("cpuUsage");
-        cpuElement.textContent = `${data.cpu.percent}%`;
-        cpuElement.title = `${data.cpu.cores} cores`;
-
-        // Memory Usage
-        const memElement = document.getElementById("memoryUsage");
-        memElement.textContent = `${data.memory.percent}%`;
-        memElement.title = `Used: ${data.memory.used} / Total: ${data.memory.total}`;
-
-        // Disk Usage
-        const diskElement = document.getElementById("diskUsage");
-        diskElement.textContent = `${data.disk.percent}%`;
-        diskElement.title = `Used: ${data.disk.used} / Total: ${data.disk.total}`;
-
-        // FFmpeg Processes
-        const ffmpegElement = document.getElementById("ffmpegProcesses");
-        ffmpegElement.textContent = data.ffmpeg.count;
-        ffmpegElement.title = data.ffmpeg.active
-          ? "Streams Active"
-          : "No Active Streams";
-
-        // Update metrics cards styling based on thresholds
-        updateMetricCardStyle("cpuUsage", data.cpu.percent);
-        updateMetricCardStyle("memoryUsage", data.memory.percent);
-        updateMetricCardStyle("diskUsage", data.disk.percent);
-      }
-
-      // Update metric card styling based on value
-      function updateMetricCardStyle(elementId, value) {
-        const card = document.getElementById(elementId).closest(".metric-card");
-
-        // Remove existing status classes
-        card.classList.remove("warning", "critical");
-
-        // Add appropriate status class
-        if (value >= 90) {
-          card.classList.add("critical");
-        } else if (value >= 75) {
-          card.classList.add("warning");
-        }
-      }
-
-      // Update cameras grid
-      function updateCamerasGrid(cameras) {
-        const grid = document.getElementById("camerasGrid");
-        const loadingState = document.getElementById("loadingState");
-
-        loadingState.style.display = "none";
-
-        // Clear existing HLS players
-        hlsPlayers.forEach((hls) => {
-          if (hls) hls.destroy();
-        });
-        hlsPlayers.clear();
-
-        // For testing, assume camera 102 is always active since we know it works
-        const allCameras = CAMERA_IDS.map((id) => ({
-          camera_id: id,
-          status: {
-            running: { high: true, low: true }, // Force camera to be considered active
-            restartAttempts: 0,
-            healthCheck: true
-          }
-        }));
-
-        // Update active camera count
-        document.getElementById("activeCameraCount").textContent =
-          allCameras.length;
-
-        // Generate camera cards
-        grid.innerHTML = allCameras
-          .map((camera) => createCameraCard(camera))
-          .join("");
-
-        // Initialize HLS players for all cameras
-        allCameras.forEach((camera) => {
-          initializeHLSPlayer(camera.camera_id);
-        });
-      }
-
-      // Create camera card HTML
-      function createCameraCard(camera) {
-        return `
-          <div class="camera-card" id="camera-card-${camera.camera_id}">
-            <div class="camera-header">
-              <span class="camera-id">Camera ${camera.camera_id}</span>
-              <span class="camera-status" id="status-${camera.camera_id}">
-                <span class="status-dot"></span>
-                <span class="status-text">Connecting...</span>
+    <div class="container mt-4">
+      <div class="row">
+        <!-- Live Stream Section -->
+        <div class="col-lg-8">
+          <div class="stream-container">
+            <h4><i class="fas fa-broadcast-tower"></i> Live Stream</h4>
+            <div class="video-container">
+              <video id="liveVideo" controls autoplay muted></video>
+              <div id="streamError" class="stream-error d-none">
+                <i class="fas fa-exclamation-triangle"></i>
+                <p>Stream connection lost. Reconnecting...</p>
+                <div class="loading-spinner"></div>
+              </div>
+            </div>
+            <div class="controls">
+              <button class="btn btn-custom" onclick="toggleMute()">
+                <i id="muteIcon" class="fas fa-volume-mute"></i>
+              </button>
+              <button class="btn btn-custom" onclick="toggleFullscreen()">
+                <i class="fas fa-expand"></i>
+              </button>
+              <span class="float-end">
+                <span id="streamStatus">
+                  <span class="status-indicator status-live"></span> Live
+                </span>
               </span>
             </div>
-            
-            <div class="video-container">
-              <video
-                id="video-${camera.camera_id}"
-                class="video-player"
-                playsinline
-                tabindex="0"
-              ></video>
-              
-              <div class="playback-controls">
-                <button class="playback-btn" onclick="skipBackward('${camera.camera_id}')">
-                  <svg viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M11.5 12l8.5 6V6l-8.5 6zm-2 0L18 6v12l-8.5-6z"/>
-                  </svg>
-                </button>
-                <button class="playback-btn" id="play-${camera.camera_id}" onclick="togglePlay('${camera.camera_id}')">
-                  <svg viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M8 5v14l11-7z"/>
-                  </svg>
-                </button>
-                <button class="playback-btn" onclick="skipForward('${camera.camera_id}')">
-                  <svg viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/>
-                  </svg>
-                </button>
-                <div class="time-display" id="time-${camera.camera_id}">00:00 / 00:00</div>
-              </div>
-              
-              <div class="progress-bar" id="progress-${camera.camera_id}" onclick="seek(event, '${camera.camera_id}')">
-                <div class="progress-bar-fill" id="progress-fill-${camera.camera_id}"></div>
-              </div>
+          </div>
+        </div>
 
-              <div class="live-indicator" id="live-${camera.camera_id}" onclick="jumpToLive('${camera.camera_id}')">
-                <div class="live-dot"></div>
-                <span class="live-text">LIVE</span>
-              </div>
+        <!-- Recordings Section -->
+        <div class="col-lg-4">
+          <div class="stream-container">
+            <h4><i class="fas fa-history"></i> Recordings</h4>
+            <div class="mb-3">
+              <input type="date" class="date-picker" id="recordingDate" onchange="loadRecordings()">
             </div>
-
-            <div class="camera-info">
-              <div class="info-grid">
-                <div class="info-item">
-                  <span class="info-label">Status</span>
-                  <span class="info-value" id="info-status-${camera.camera_id}">-</span>
-                </div>
-                <div class="info-item">
-                  <span class="info-label">Resolution</span>
-                  <span class="info-value" id="info-resolution-${camera.camera_id}">-</span>
-                </div>
-                <div class="info-item">
-                  <span class="info-label">Bitrate</span>
-                  <span class="info-value" id="info-bitrate-${camera.camera_id}">-</span>
-                </div>
-                <div class="info-item">
-                  <span class="info-label">FPS</span>
-                  <span class="info-value" id="info-fps-${camera.camera_id}">-</span>
-                </div>
-              </div>
-              
-              <div class="camera-actions">
-                <button class="action-btn restart" onclick="restartCamera('${camera.camera_id}')">
-                  <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                    <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
-                  </svg>
-                  Restart Stream
-                </button>
-                <button class="action-btn fullscreen" onclick="openFullscreen('video-${camera.camera_id}')">
-                  <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                    <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
-                  </svg>
-                  Fullscreen
-                </button>
-              </div>
-            </div>
-
-            <button class="history-toggle" onclick="toggleHistory('${camera.camera_id}')">
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.25 2.52.77-1.28-3.52-2.09V8z"/>
-              </svg>
-            </button>
-
-            <div id="history-${camera.camera_id}" class="history-panel">
-              <h3>Recording History</h3>
-              <div class="date-selector">
-                <label>Select Date:</label>
-                <select id="date-select-${camera.camera_id}" onchange="loadRecordingHours('${camera.camera_id}', this.value)">
-                  <option value="">Loading dates...</option>
-                </select>
-              </div>
-              <div class="hour-grid" id="hour-grid-${camera.camera_id}">
-                <!-- Hours will be populated dynamically -->
-              </div>
-              <div class="no-recordings" id="no-recordings-${camera.camera_id}" style="display: none;">
-                No recordings available for selected date
-              </div>
+            <div class="recordings-list" id="recordingsList">
+              <!-- Recordings will be loaded here -->
             </div>
           </div>
-        `;
-      }
+        </div>
+      </div>
 
-      // Initialize HLS player for a camera
-      function initializeHLSPlayer(cameraId) {
-        const videoElement = document.getElementById(`video-${cameraId}`);
-        const loadingElement = document.getElementById(`loading-${cameraId}`);
-        const errorElement = document.getElementById(`error-${cameraId}`);
-        const statusElement = document.getElementById(`status-${cameraId}`);
+      <!-- Playback Section -->
+      <div class="row mt-4">
+        <div class="col-12">
+          <div class="stream-container">
+            <h4><i class="fas fa-play-circle"></i> Playback</h4>
+            <div class="video-container">
+              <video id="playbackVideo" controls></video>
+            </div>
+            <div class="controls">
+              <button class="btn btn-custom" onclick="previousHour()">
+                <i class="fas fa-step-backward"></i>
+              </button>
+              <button class="btn btn-custom" onclick="nextHour()">
+                <i class="fas fa-step-forward"></i>
+              </button>
+              <span class="float-end" id="playbackTime"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
-        if (!videoElement || !Hls.isSupported()) {
-          console.error("HLS.js not supported or video element not found");
-          if (errorElement) {
-            errorElement.textContent =
-              "HLS playback not supported in this browser";
-            errorElement.style.display = "block";
-          }
-          return;
-        }
+    <script>
+      // Initialize HLS.js
+      const liveVideo = document.getElementById('liveVideo');
+      const playbackVideo = document.getElementById('playbackVideo');
+      const livehls = new Hls();
+      const playbackhls = new Hls();
+      let currentCameraId = '102'; // Default camera ID
 
-        // Clear any existing player
-        if (hlsPlayers.has(cameraId)) {
-          const oldPlayer = hlsPlayers.get(cameraId);
-          oldPlayer.destroy();
-          hlsPlayers.delete(cameraId);
-        }
+      // Initialize with today's date
+      document.getElementById('recordingDate').valueAsDate = new Date();
 
-        // Enhanced HLS configuration with better error handling
-        const hlsConfig = {
-          debug: false,
-          enableWorker: true,
-          lowLatencyMode: true,
-          backBufferLength: 30,
-          maxBufferSize: 30 * 1000 * 1000, // 30MB max buffer
-          maxBufferLength: 30, // 30 seconds max buffer
-          maxMaxBufferLength: 60, // 60 seconds absolute max
-          startLevel: -1, // Auto quality selection
-          abrEwmaFastLive: 3,
-          abrEwmaSlowLive: 9,
-          abrBandWidthFactor: 0.9,
-          abrBandWidthUpFactor: 0.7,
-          liveSyncDurationCount: 3, // Use 3 segments for stability
-          liveMaxLatencyDurationCount: 6, // Reduced from 10 to 6
-          liveDurationInfinity: false, // Don't allow infinite duration
-          manifestLoadingTimeOut: 10000, // 10 seconds
-          manifestLoadingMaxRetry: 3,
-          manifestLoadingRetryDelay: 1000,
-          levelLoadingTimeOut: 10000,
-          levelLoadingMaxRetry: 3,
-          levelLoadingRetryDelay: 1000,
-          fragLoadingTimeOut: 10000,
-          fragLoadingMaxRetry: 3,
-          fragLoadingRetryDelay: 1000,
-          startFragPrefetch: true,
-          testBandwidth: true,
-          progressive: true,
-          // Error tracking
-          xhrSetup: function (xhr, url) {
-            xhr.addEventListener("error", function () {
-              console.warn(`XHR error for camera ${cameraId}:`, url);
-              updateStatus("Network error, attempting to reconnect...", true);
-            });
-          }
-        };
-
-        const hls = new Hls(hlsConfig);
-        hlsPlayers.set(cameraId, hls);
-
-        // Stream URL
-        const streamUrl = `${API_BASE_URL}/hls/${cameraId}/live/live.m3u8`;
-
-        // Helper function to update status
-        function updateStatus(message, isError = false) {
-          if (statusElement) {
-            statusElement.textContent = message;
-            statusElement.className = isError ? "status error" : "status";
-            statusElement.style.display = "block";
-          }
-          if (errorElement) {
-            errorElement.textContent = isError ? message : "";
-            errorElement.style.display = isError ? "block" : "none";
-          }
-          if (loadingElement) {
-            loadingElement.style.display =
-              isError || message.includes("Loading") ? "block" : "none";
-          }
-        }
-
-        // Error handling and recovery with better status updates
-        hls.on(Hls.Events.ERROR, function (event, data) {
-          console.warn(
-            `HLS error for camera ${cameraId}:`,
-            data.type,
-            data.details
-          );
-
-          if (data.fatal) {
-            switch (data.type) {
-              case Hls.ErrorTypes.NETWORK_ERROR:
-                console.log("Network error, attempting recovery...");
-                updateStatus("Network error, attempting to reconnect...", true);
-                hls.startLoad();
-                break;
-              case Hls.ErrorTypes.MEDIA_ERROR:
-                console.log("Media error, attempting recovery...");
-                updateStatus("Media error, attempting to recover...", true);
-                hls.recoverMediaError();
-                break;
-              default:
-                console.log("Fatal error, reloading stream...");
-                updateStatus("Stream error, reloading...", true);
-                initializeHLSPlayer(cameraId);
-                break;
-            }
-          } else {
-            // Non-fatal errors
-            switch (data.details) {
-              case Hls.ErrorDetails.BUFFER_STALLED_ERROR:
-                updateStatus("Stream buffering...", false);
-                break;
-              case Hls.ErrorDetails.BUFFER_FULL_ERROR:
-                updateStatus("Buffer full, adjusting playback...", false);
-                break;
-              case Hls.ErrorDetails.FRAG_LOAD_ERROR:
-                updateStatus("Fragment loading error, retrying...", true);
-                break;
-              default:
-                updateStatus(
-                  "Stream issue detected, attempting to recover...",
-                  true
-                );
-                break;
-            }
-          }
-        });
-
-        // Monitor stream health with better status updates
-        let lastFragmentLoaded = Date.now();
-        const STALL_THRESHOLD = 10000; // 10 seconds
-        let isStalled = false;
-
-        hls.on(Hls.Events.FRAG_LOADED, () => {
-          lastFragmentLoaded = Date.now();
-          if (isStalled) {
-            isStalled = false;
-            updateStatus("Stream resumed", false);
-            setTimeout(() => updateStatus(""), 2000);
-          }
-        });
-
-        hls.on(Hls.Events.FRAG_PARSING_DATA, () => {
-          if (videoElement.readyState >= 3) {
-            // ENOUGH_DATA
-            updateStatus("");
-          }
-        });
-
-        const healthCheck = setInterval(() => {
-          const now = Date.now();
-          if (now - lastFragmentLoaded > STALL_THRESHOLD && !isStalled) {
-            isStalled = true;
-            console.warn(
-              `Stream stalled for camera ${cameraId}, attempting recovery...`
-            );
-            updateStatus("Stream stalled, attempting to recover...", true);
-            hls.startLoad();
-          }
-        }, 5000);
-
-        // Cleanup on destroy
-        hls.on(Hls.Events.DESTROYING, () => {
-          clearInterval(healthCheck);
-        });
-
-        // Load source and attach media
-        updateStatus("Loading stream...");
-        hls.loadSource(streamUrl);
-        hls.attachMedia(videoElement);
-
-        // Stream loading progress
-        hls.on(Hls.Events.MANIFEST_LOADING, () => {
-          updateStatus("Loading stream manifest...");
-        });
-
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          updateStatus("Starting playback...");
-          videoElement.play().catch(function (error) {
-            console.log("Autoplay failed:", error);
-            updateStatus("Autoplay failed. Click to play.", true);
+      // Setup live stream
+      function setupLiveStream() {
+        const liveUrl = `/hls/${currentCameraId}/live/live.m3u8`;
+        if (Hls.isSupported()) {
+          livehls.loadSource(liveUrl);
+          livehls.attachMedia(liveVideo);
+          livehls.on(Hls.Events.MANIFEST_PARSED, () => {
+            liveVideo.play();
           });
-        });
 
-        hls.on(Hls.Events.LEVEL_LOADED, () => {
-          if (videoElement.readyState >= 3) {
-            // ENOUGH_DATA
-            updateStatus("");
-          }
-        });
-
-        // Add video element error handler
-        videoElement.addEventListener("error", function (e) {
-          console.error(`Video error for camera ${cameraId}:`, e.target.error);
-          updateStatus("Video playback error, attempting to recover...", true);
-          if (hls) {
-            hls.recoverMediaError();
-          }
-        });
-
-        // Add loading indicator
-        updateStatus("Initializing stream...");
+          // Error handling
+          livehls.on(Hls.Events.ERROR, (event, data) => {
+            if (data.fatal) {
+              showStreamError(true);
+              setTimeout(() => {
+                livehls.loadSource(liveUrl);
+                livehls.attachMedia(liveVideo);
+              }, 2000);
+            }
+          });
+        }
       }
 
-      // Utility functions
-      function getUptime(camera) {
-        if (!camera.last_seen) return "Unknown";
-        const lastSeen = new Date(camera.last_seen);
-        const now = new Date();
-        const diffMs = now - lastSeen;
-        const diffMins = Math.floor(diffMs / 60000);
-
-        if (diffMins < 1) return "Just now";
-        if (diffMins < 60) return `${diffMins}m ago`;
-        const diffHours = Math.floor(diffMins / 60);
-        if (diffHours < 24) return `${diffHours}h ${diffMins % 60}m`;
-        const diffDays = Math.floor(diffHours / 24);
-        return `${diffDays}d ${diffHours % 24}h`;
+      // Load recordings for selected date
+      async function loadRecordings() {
+        const date = document.getElementById('recordingDate').value;
+        try {
+          const response = await fetch(`/api/recordings/${currentCameraId}/${date}`);
+          const recordings = await response.json();
+          
+          const recordingsList = document.getElementById('recordingsList');
+          recordingsList.innerHTML = '';
+          
+          recordings.forEach(recording => {
+            const item = document.createElement('div');
+            item.className = 'recording-item';
+            item.innerHTML = `
+              <i class="fas fa-clock"></i>
+              ${recording.hour}:00 - ${recording.hour}:59
+              <span class="float-end">
+                <i class="fas fa-play"></i>
+              </span>
+            `;
+            item.onclick = () => playRecording(date, recording.hour);
+            recordingsList.appendChild(item);
+          });
+        } catch (error) {
+          console.error('Failed to load recordings:', error);
+        }
       }
 
-      function updateConnectionStatus(connected) {
-        const statusDot = document.getElementById("connectionStatus");
-        const statusText = document.getElementById("connectionText");
+      // Play selected recording
+      function playRecording(date, hour) {
+        const playbackUrl = `/hls/${currentCameraId}/recordings/${date}/${hour}/playlist.m3u8`;
+        if (Hls.isSupported()) {
+          playbackhls.loadSource(playbackUrl);
+          playbackhls.attachMedia(playbackVideo);
+          playbackhls.on(Hls.Events.MANIFEST_PARSED, () => {
+            playbackVideo.play();
+          });
+          document.getElementById('playbackTime').textContent = `${date} ${hour}:00`;
+        }
+      }
 
-        if (connected) {
-          statusDot.className = "status-dot online";
-          statusText.textContent = "Connected";
+      // UI Controls
+      function toggleMute() {
+        liveVideo.muted = !liveVideo.muted;
+        const muteIcon = document.getElementById('muteIcon');
+        muteIcon.className = liveVideo.muted ? 'fas fa-volume-mute' : 'fas fa-volume-up';
+      }
+
+      function toggleFullscreen() {
+        if (!document.fullscreenElement) {
+          liveVideo.requestFullscreen();
         } else {
-          statusDot.className = "status-dot offline";
-          statusText.textContent = "Disconnected";
+          document.exitFullscreen();
         }
       }
 
-      function updateLastUpdateTime() {
-        const now = new Date();
-        document.getElementById("lastUpdate").textContent =
-          now.toLocaleTimeString("en-US", { hour12: false });
+      function showStreamError(show) {
+        const errorDiv = document.getElementById('streamError');
+        errorDiv.className = show ? 'stream-error' : 'stream-error d-none';
+        const statusIndicator = document.querySelector('#streamStatus .status-indicator');
+        statusIndicator.className = `status-indicator ${show ? 'status-offline' : 'status-live'}`;
       }
 
-      function showError(message) {
-        document.getElementById("errorMessage").textContent = message;
-        document.getElementById("errorState").style.display = "block";
-        document.getElementById("loadingState").style.display = "none";
+      // Navigation controls
+      function previousHour() {
+        // Implement previous hour navigation
       }
 
-      function hideError() {
-        document.getElementById("errorState").style.display = "none";
+      function nextHour() {
+        // Implement next hour navigation
       }
 
-      // Camera actions
-      async function restartCamera(cameraId) {
+      // Initialize
+      setupLiveStream();
+      loadRecordings();
+
+      // Check stream status periodically
+      setInterval(async () => {
         try {
-          const response = await fetch(
-            `${API_BASE_URL}/streams/restart/${cameraId}`,
-            {
-              method: "POST"
-            }
-          );
-
-          if (response.ok) {
-            const result = await response.json();
-            if (result.success) {
-              // Refresh dashboard after restart
-              setTimeout(() => loadDashboard(), 3000);
-            }
-          }
+          const response = await fetch('/api/status');
+          const status = await response.json();
+          showStreamError(!status.healthy);
         } catch (error) {
-          console.error("Restart failed:", error);
+          showStreamError(true);
         }
-      }
-
-      function openFullscreen(videoId) {
-        const video = document.getElementById(videoId);
-        if (video.requestFullscreen) {
-          video.requestFullscreen();
-        } else if (video.webkitRequestFullscreen) {
-          video.webkitRequestFullscreen();
-        } else if (video.msRequestFullscreen) {
-          video.msRequestFullscreen();
-        }
-      }
-
-      // Cleanup on page unload
-      window.addEventListener("beforeunload", () => {
-        if (refreshTimer) clearInterval(refreshTimer);
-        hlsPlayers.forEach((hls) => {
-          if (hls) hls.destroy();
-        });
-      });
-
-      // Toggle history panel
-      function toggleHistory(cameraId) {
-        const panel = document.getElementById(`history-${cameraId}`);
-        panel.classList.toggle("open");
-
-        if (panel.classList.contains("open")) {
-          loadRecordingDates(cameraId);
-        }
-      }
-
-      async function loadRecordingDates(cameraId) {
-        try {
-          const response = await fetch(
-            `${API_BASE_URL}/api/streams/playback/${cameraId}`
-          );
-          if (!response.ok) throw new Error("Failed to load recording dates");
-
-          const data = await response.json();
-          const select = document.getElementById(`date-select-${cameraId}`);
-
-          if (data.available_dates && data.available_dates.length > 0) {
-            select.innerHTML = data.available_dates
-              .map(
-                (date) => `<option value="${date}">${formatDate(date)}</option>`
-              )
-              .join("");
-
-            // Load hours for first date
-            loadRecordingHours(cameraId, data.available_dates[0]);
-          } else {
-            select.innerHTML =
-              '<option value="">No recordings available</option>';
-            document.getElementById(`hour-grid-${cameraId}`).innerHTML = "";
-            document.getElementById(`no-recordings-${cameraId}`).style.display =
-              "block";
-          }
-        } catch (error) {
-          console.error("Failed to load recording dates:", error);
-        }
-      }
-
-      async function loadRecordingHours(cameraId, date) {
-        try {
-          const response = await fetch(
-            `${API_BASE_URL}/api/streams/playback/${cameraId}/${date}`
-          );
-          if (!response.ok) throw new Error("Failed to load recording hours");
-
-          const data = await response.json();
-          const hourGrid = document.getElementById(`hour-grid-${cameraId}`);
-          const noRecordings = document.getElementById(
-            `no-recordings-${cameraId}`
-          );
-
-          if (data.available_hours && data.available_hours.length > 0) {
-            hourGrid.innerHTML = generateHourButtons(
-              cameraId,
-              date,
-              data.available_hours
-            );
-            hourGrid.style.display = "grid";
-            noRecordings.style.display = "none";
-          } else {
-            hourGrid.style.display = "none";
-            noRecordings.style.display = "block";
-          }
-        } catch (error) {
-          console.error("Failed to load recording hours:", error);
-        }
-      }
-
-      function generateHourButtons(cameraId, date, availableHours) {
-        const hours = [];
-        for (let i = 0; i < 24; i++) {
-          const hour = i.toString().padStart(2, "0");
-          const isAvailable = availableHours.includes(hour);
-          hours.push(`
-            <button class="hour-btn ${isAvailable ? "available" : ""}" 
-                    onclick="playRecording('${cameraId}', '${date}', '${hour}')"
-                    ${!isAvailable ? "disabled" : ""}>
-              ${hour}:00
-            </button>
-          `);
-        }
-        return hours.join("");
-      }
-
-      async function playRecording(cameraId, date, hour) {
-        try {
-          const response = await fetch(
-            `${API_BASE_URL}/api/streams/playback/${cameraId}/${date}/${hour}`
-          );
-          if (!response.ok) throw new Error("Failed to get recording URL");
-
-          const data = await response.json();
-          if (!data.stream_url) throw new Error("No recording URL available");
-
-          const videoElement = document.getElementById(`video-${cameraId}`);
-          const hls = hlsPlayers.get(cameraId);
-
-          if (hls) {
-            // Update status indicator
-            const statusText = document.getElementById(
-              `info-status-${cameraId}`
-            );
-            statusText.textContent = `Playing Recording (${formatDate(
-              date
-            )} ${hour}:00)`;
-
-            // Load the recording
-            hls.loadSource(data.stream_url);
-            hls.on(Hls.Events.MANIFEST_PARSED, () => {
-              videoElement.play();
-            });
-
-            // Update live indicator
-            const liveIndicator = document.getElementById(`live-${cameraId}`);
-            liveIndicator.classList.add("behind");
-          }
-        } catch (error) {
-          console.error("Failed to play recording:", error);
-        }
-      }
-
-      // Format date for display
-      function formatDate(dateStr) {
-        const date = new Date(dateStr);
-        return date.toLocaleDateString("en-US", {
-          year: "numeric",
-          month: "short",
-          day: "numeric"
-        });
-      }
-
-      // Playback Controls
-      function togglePlay(cameraId) {
-        const video = document.getElementById(`video-${cameraId}`);
-        const playBtn = document.getElementById(`play-${cameraId}`);
-
-        if (video.paused) {
-          video.play();
-          playBtn.innerHTML = `
-            <svg viewBox="0 0 24 24" fill="currentColor">
-              <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
-            </svg>
-          `;
-        } else {
-          video.pause();
-          playBtn.innerHTML = `
-            <svg viewBox="0 0 24 24" fill="currentColor">
-              <path d="M8 5v14l11-7z"/>
-            </svg>
-          `;
-        }
-      }
-
-      function skipBackward(cameraId) {
-        const video = document.getElementById(`video-${cameraId}`);
-        video.currentTime = Math.max(0, video.currentTime - 10);
-      }
-
-      function skipForward(cameraId) {
-        const video = document.getElementById(`video-${cameraId}`);
-        video.currentTime = Math.min(video.duration, video.currentTime + 10);
-      }
-
-      function seek(event, cameraId) {
-        const progressBar = document.getElementById(`progress-${cameraId}`);
-        const video = document.getElementById(`video-${cameraId}`);
-        const rect = progressBar.getBoundingClientRect();
-        const pos = (event.clientX - rect.left) / rect.width;
-        video.currentTime = pos * video.duration;
-      }
-
-      function updateProgress(cameraId) {
-        const video = document.getElementById(`video-${cameraId}`);
-        const progressFill = document.getElementById(
-          `progress-fill-${cameraId}`
-        );
-        const timeDisplay = document.getElementById(`time-${cameraId}`);
-        const liveIndicator = document.getElementById(`live-${cameraId}`);
-
-        if (video && progressFill && timeDisplay) {
-          const progress = (video.currentTime / video.duration) * 100;
-          progressFill.style.width = `${progress}%`;
-
-          const currentTime = formatTime(video.currentTime);
-          const duration = formatTime(video.duration);
-          timeDisplay.textContent = `${currentTime} / ${duration}`;
-
-          // Update live indicator
-          if (liveIndicator) {
-            const behindLive = video.duration - video.currentTime;
-            if (behindLive > 10) {
-              liveIndicator.classList.add("behind");
-            } else {
-              liveIndicator.classList.remove("behind");
-            }
-          }
-        }
-      }
-
-      function formatTime(seconds) {
-        if (!seconds || isNaN(seconds)) return "00:00";
-        const mins = Math.floor(seconds / 60);
-        const secs = Math.floor(seconds % 60);
-        return `${mins.toString().padStart(2, "0")}:${secs
-          .toString()
-          .padStart(2, "0")}`;
-      }
-
-      // Initialize video player with playback controls
-      function initializeVideoPlayer(cameraId, videoElement) {
-        if (!videoElement) return;
-
-        videoElement.addEventListener("timeupdate", () =>
-          updateProgress(cameraId)
-        );
-        videoElement.addEventListener("loadedmetadata", () =>
-          updateProgress(cameraId)
-        );
-
-        // Add keyboard controls when video is focused
-        videoElement.addEventListener("keydown", (e) => {
-          switch (e.key) {
-            case " ":
-            case "k":
-              e.preventDefault();
-              togglePlay(cameraId);
-              break;
-            case "ArrowLeft":
-            case "j":
-              e.preventDefault();
-              skipBackward(cameraId);
-              break;
-            case "ArrowRight":
-            case "l":
-              e.preventDefault();
-              skipForward(cameraId);
-              break;
-          }
-        });
-      }
-
-      function jumpToLive(cameraId) {
-        const hls = hlsPlayers.get(cameraId);
-        const videoElement = document.getElementById(`video-${cameraId}`);
-        const liveIndicator = document.getElementById(`live-${cameraId}`);
-
-        if (hls && videoElement) {
-          // Get the live edge position
-          const livePosition = hls.liveSyncPosition;
-
-          if (livePosition && !isNaN(livePosition)) {
-            // Jump directly to live edge
-            videoElement.currentTime = livePosition;
-          } else {
-            // If we can't get live position, reload the stream
-            const streamUrl = `${API_BASE_URL}/hls/${cameraId}/live/live.m3u8`;
-            hls.loadSource(streamUrl);
-          }
-
-          liveIndicator.classList.remove("behind");
-          videoElement.play().catch(console.error);
-        }
-      }
+      }, 5000);
     </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   </body>
 </html>

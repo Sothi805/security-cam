@@ -1,0 +1,219 @@
+/* Additional styles for enhanced UI */
+.navbar-brand {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.navbar-text {
+    color: var(--text-color);
+    opacity: 0.9;
+}
+
+.stream-container h4 {
+    margin-bottom: 1rem;
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.stream-container h4 i {
+    margin-right: 0.5rem;
+    color: var(--accent-color);
+}
+
+.video-container {
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    transition: transform 0.3s ease;
+}
+
+.video-container:hover {
+    transform: scale(1.01);
+}
+
+.controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.btn-custom:focus {
+    box-shadow: 0 0 0 0.25rem rgba(52, 152, 219, 0.25);
+    outline: none;
+}
+
+.recording-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.recording-item i {
+    margin-right: 0.5rem;
+    color: var(--accent-color);
+}
+
+.recording-item:hover i {
+    transform: scale(1.1);
+}
+
+.date-picker:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 0.25rem rgba(52, 152, 219, 0.25);
+}
+
+/* Custom scrollbar for recordings list */
+.recordings-list::-webkit-scrollbar {
+    width: 8px;
+}
+
+.recordings-list::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.1);
+    border-radius: 4px;
+}
+
+.recordings-list::-webkit-scrollbar-thumb {
+    background: var(--accent-color);
+    border-radius: 4px;
+}
+
+.recordings-list::-webkit-scrollbar-thumb:hover {
+    background: #2980b9;
+}
+
+/* Responsive adjustments */
+@media (max-width: 992px) {
+    .stream-container {
+        margin: 0.5rem 0;
+    }
+
+    .controls {
+        flex-wrap: wrap;
+    }
+
+    .btn-custom {
+        padding: 0.4rem 0.8rem;
+    }
+}
+
+/* Loading animation */
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Error message animation */
+@keyframes shake {
+    0%, 100% { transform: translate(-50%, -50%); }
+    10%, 30%, 50%, 70%, 90% { transform: translate(-52%, -50%); }
+    20%, 40%, 60%, 80% { transform: translate(-48%, -50%); }
+}
+
+.stream-error {
+    animation: shake 0.5s ease-in-out;
+}
+
+/* Playback controls enhancement */
+.btn-custom i {
+    transition: transform 0.2s ease;
+}
+
+.btn-custom:hover i {
+    transform: scale(1.2);
+}
+
+/* Status indicators */
+.status-indicator.status-live {
+    box-shadow: 0 0 10px var(--success-color);
+}
+
+.status-indicator.status-offline {
+    box-shadow: 0 0 10px var(--danger-color);
+}
+
+/* Video player enhancements */
+video {
+    background-color: #000;
+}
+
+video::-webkit-media-controls {
+    background-color: rgba(0, 0, 0, 0.5);
+}
+
+video::-webkit-media-controls-panel {
+    padding: 0.5rem;
+}
+
+/* Fullscreen mode enhancements */
+.video-container:fullscreen {
+    padding-bottom: 0;
+    background: #000;
+}
+
+.video-container:fullscreen video {
+    position: static;
+    width: 100%;
+    height: 100%;
+}
+
+/* Toast notifications */
+.toast-container {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 1050;
+}
+
+.toast {
+    background-color: var(--secondary-color);
+    color: var(--text-color);
+    border: none;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.toast-header {
+    background-color: rgba(0, 0, 0, 0.2);
+    color: var(--text-color);
+    border: none;
+}
+
+/* Hover effects */
+.stream-container {
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.stream-container:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* Focus styles */
+.btn-custom:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
+}
+
+/* Accessibility improvements */
+.btn-custom {
+    position: relative;
+    overflow: hidden;
+}
+
+.btn-custom::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    transition: width 0.3s ease, height 0.3s ease;
+}
+
+.btn-custom:active::after {
+    width: 200%;
+    height: 200%;
+} 

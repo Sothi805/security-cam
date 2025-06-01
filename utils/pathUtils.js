@@ -13,58 +13,215 @@ class PathUtils {
         await this.ensureBaseDirectories();
     }
 
-    // Ensure all base directories exist with new structure
+    // Ensure all base directories exist with proper structure
     async ensureBaseDirectories() {
         for (const cameraId of config.cameraIds) {
-            // Base camera directory: hls/{camera_id}/
-            const cameraDir = path.join(config.hlsPath, cameraId.toString());
-            await fs.ensureDir(cameraDir);
-            
-            // Live directory: hls/{camera_id}/live/
-            const liveDir = path.join(cameraDir, 'live');
-            await fs.ensureDir(liveDir);
-            
-            // Recordings directory: hls/{camera_id}/recordings/
-            const recordingsDir = path.join(cameraDir, 'recordings');
-            await fs.ensureDir(recordingsDir);
+            await this.ensureCameraStructure(cameraId);
         }
     }
 
-    // Get live directory path for a camera: hls/{camera_id}/live/
+    // Ensure complete camera directory structure exists
+    async ensureCameraStructure(cameraId) {
+        const cameraDir = this.getCameraDir(cameraId);
+        const liveDir = this.getLiveDir(cameraId);
+        const recordingsDir = this.getRecordingsBaseDir(cameraId);
+
+        // Create base directories
+        await fs.ensureDir(cameraDir);
+        await fs.ensureDir(liveDir);
+        await fs.ensureDir(recordingsDir);
+
+        // Create current date and hour directories
+        const date = moment().format('YYYY-MM-DD');
+        const hour = moment().format('HH');
+        await this.ensureDateHourDirs(cameraId, date, hour);
+
+        logger.debug(`✅ Ensured directory structure for camera ${cameraId}`);
+    }
+
+    // Ensure date and hour directories exist
+    async ensureDateHourDirs(cameraId, date, hour) {
+        const dateDir = path.join(this.getRecordingsBaseDir(cameraId), date);
+        const hourDir = path.join(dateDir, hour);
+        
+        await fs.ensureDir(dateDir);
+        await fs.ensureDir(hourDir);
+        
+        return hourDir;
+    }
+
+    // Get camera base directory
+    getCameraDir(cameraId) {
+        return path.join(config.hlsPath, cameraId.toString());
+    }
+
+    // Get live streaming directory
     getLiveDir(cameraId) {
-        return path.join(config.hlsPath, cameraId.toString(), 'live');
+        return path.join(this.getCameraDir(cameraId), 'live');
     }
 
-    // Get recordings directory path: hls/{camera_id}/recordings/YYYY-MM-DD/HH/
-    getRecordingsDir(cameraId, date, hour) {
-        return path.join(config.hlsPath, cameraId.toString(), 'recordings', date, hour);
+    // Get recordings base directory
+    getRecordingsBaseDir(cameraId) {
+        return path.join(this.getCameraDir(cameraId), 'recordings');
     }
 
-    // Ensure recording directory exists for specific date and hour
-    async ensureRecordingDir(cameraId, date, hour) {
-        const recordingDir = this.getRecordingsDir(cameraId, date, hour);
-        await fs.ensureDir(recordingDir);
-        return recordingDir;
+    // Get specific recording directory
+    getRecordingDir(cameraId, date, hour) {
+        return path.join(this.getRecordingsBaseDir(cameraId), date, hour);
     }
 
-    // Get live segment path: hls/{camera_id}/live/segment{N}.ts
-    getLiveSegmentPath(cameraId, segmentNumber) {
-        return path.join(this.getLiveDir(cameraId), `segment${segmentNumber}.ts`);
-    }
-
-    // Get recording segment path: hls/{camera_id}/recordings/YYYY-MM-DD/HH/{MM}.ts
-    getRecordingSegmentPath(cameraId, date, hour, minute) {
-        return path.join(this.getRecordingsDir(cameraId, date, hour), `${minute.toString().padStart(2, '0')}.ts`);
-    }
-
-    // Get live playlist path: hls/{camera_id}/live/live.m3u8
+    // Get live stream playlist path
     getLivePlaylistPath(cameraId) {
         return path.join(this.getLiveDir(cameraId), 'live.m3u8');
     }
 
-    // Get recording playlist path: hls/{camera_id}/recordings/YYYY-MM-DD/HH/playlist.m3u8
+    // Get recording playlist path
     getRecordingPlaylistPath(cameraId, date, hour) {
-        return path.join(this.getRecordingsDir(cameraId, date, hour), 'playlist.m3u8');
+        return path.join(this.getRecordingDir(cameraId, date, hour), 'playlist.m3u8');
+    }
+
+    // Get live segment path pattern
+    getLiveSegmentPattern(cameraId) {
+        return path.join(this.getLiveDir(cameraId), 'segment%d.ts');
+    }
+
+    // Get recording segment path pattern
+    getRecordingSegmentPattern(cameraId, date, hour) {
+        return path.join(this.getRecordingDir(cameraId, date, hour), '%M.ts');
+    }
+
+    // Validate directory structure
+    async validateStructure(cameraId) {
+        const errors = [];
+        
+        // Check base directories
+        const cameraDir = this.getCameraDir(cameraId);
+        const liveDir = this.getLiveDir(cameraId);
+        const recordingsDir = this.getRecordingsBaseDir(cameraId);
+
+        if (!await fs.pathExists(cameraDir)) {
+            errors.push(`Camera directory missing: ${cameraDir}`);
+        }
+        if (!await fs.pathExists(liveDir)) {
+            errors.push(`Live directory missing: ${liveDir}`);
+        }
+        if (!await fs.pathExists(recordingsDir)) {
+            errors.push(`Recordings directory missing: ${recordingsDir}`);
+        }
+
+        // Check current date/hour directories
+        const date = moment().format('YYYY-MM-DD');
+        const hour = moment().format('HH');
+        const currentHourDir = this.getRecordingDir(cameraId, date, hour);
+
+        if (!await fs.pathExists(currentHourDir)) {
+            errors.push(`Current hour directory missing: ${currentHourDir}`);
+        }
+
+        return {
+            valid: errors.length === 0,
+            errors
+        };
+    }
+
+    // Clean up empty directories
+    async cleanupEmptyDirs(cameraId) {
+        const recordingsDir = this.getRecordingsBaseDir(cameraId);
+        
+        if (!await fs.pathExists(recordingsDir)) {
+            return;
+        }
+
+        const dates = await fs.readdir(recordingsDir);
+        
+        for (const date of dates) {
+            if (!this.isValidDate(date)) continue;
+            
+            const dateDir = path.join(recordingsDir, date);
+            const hours = await fs.readdir(dateDir);
+            
+            // Clean up empty hour directories
+            for (const hour of hours) {
+                if (!this.isValidHour(hour)) continue;
+                
+                const hourDir = path.join(dateDir, hour);
+                const files = await fs.readdir(hourDir);
+                
+                if (files.length === 0) {
+                    await fs.remove(hourDir);
+                    logger.debug(`Removed empty hour directory: ${hourDir}`);
+                }
+            }
+            
+            // Clean up empty date directories
+            const remainingHours = await fs.readdir(dateDir);
+            if (remainingHours.length === 0) {
+                await fs.remove(dateDir);
+                logger.debug(`Removed empty date directory: ${dateDir}`);
+            }
+        }
+    }
+
+    // Validate date format
+    isValidDate(date) {
+        return moment(date, 'YYYY-MM-DD', true).isValid();
+    }
+
+    // Validate hour format
+    isValidHour(hour) {
+        return /^\d{2}$/.test(hour) && parseInt(hour) >= 0 && parseInt(hour) <= 23;
+    }
+
+    // Get available dates for a camera
+    async getAvailableDates(cameraId) {
+        try {
+            const recordingsDir = this.getRecordingsBaseDir(cameraId);
+            
+            if (!await fs.pathExists(recordingsDir)) {
+                return [];
+            }
+
+            const items = await fs.readdir(recordingsDir);
+            const dates = items.filter(item => this.isValidDate(item));
+            
+            return dates.sort().reverse(); // Most recent first
+        } catch (error) {
+            logger.error(`Failed to get available dates for camera ${cameraId}:`, error);
+            return [];
+        }
+    }
+
+    // Get available hours for a camera and date
+    async getAvailableHours(cameraId, date) {
+        try {
+            const dateDir = path.join(this.getRecordingsBaseDir(cameraId), date);
+            
+            if (!await fs.pathExists(dateDir)) {
+                return [];
+            }
+
+            const items = await fs.readdir(dateDir);
+            const hours = items.filter(item => {
+                return this.isValidHour(item) && this.hasValidRecordings(cameraId, date, item);
+            });
+            
+            return hours.sort(); // Chronological order
+        } catch (error) {
+            logger.error(`Failed to get available hours for camera ${cameraId} on ${date}:`, error);
+            return [];
+        }
+    }
+
+    // Check if hour directory has valid recordings
+    async hasValidRecordings(cameraId, date, hour) {
+        const hourDir = this.getRecordingDir(cameraId, date, hour);
+        
+        try {
+            const files = await fs.readdir(hourDir);
+            return files.some(f => f.endsWith('.ts') || f.endsWith('.m3u8'));
+        } catch (error) {
+            return false;
+        }
     }
 
     // Get live stream web URL
@@ -77,125 +234,10 @@ class PathUtils {
         return `/hls/${cameraId}/recordings/${date}/${hour}/playlist.m3u8`;
     }
 
-    // Get all available dates for a camera
-    async getAvailableDates(cameraId) {
-        try {
-            const recordingsDir = path.join(config.hlsPath, cameraId.toString(), 'recordings');
-            
-            if (!await fs.pathExists(recordingsDir)) {
-                return [];
-            }
-
-            const items = await fs.readdir(recordingsDir);
-            const dates = [];
-            
-            for (const item of items) {
-                const itemPath = path.join(recordingsDir, item);
-                const stats = await fs.stat(itemPath);
-                
-                if (stats.isDirectory() && this.isValidDate(item)) {
-                    dates.push(item);
-                }
-            }
-            
-            return dates.sort().reverse(); // Most recent first
-        } catch (error) {
-            logger.error(`Failed to get available dates for camera ${cameraId}:`, error);
-            return [];
-        }
-    }
-
-    // Get all available hours for a camera and date
-    async getAvailableHours(cameraId, date) {
-        try {
-            const dateDir = path.join(config.hlsPath, cameraId.toString(), 'recordings', date);
-            
-            if (!await fs.pathExists(dateDir)) {
-                return [];
-            }
-
-            const items = await fs.readdir(dateDir);
-            const hours = [];
-            
-            for (const item of items) {
-                const itemPath = path.join(dateDir, item);
-                const stats = await fs.stat(itemPath);
-                
-                if (stats.isDirectory() && this.isValidHour(item)) {
-                    // Check if there are actual recordings in this hour
-                    const hourDir = itemPath;
-                    const files = await fs.readdir(hourDir);
-                    const hasRecordings = files.some(f => f.endsWith('.ts') || f.endsWith('.m3u8'));
-                    
-                    if (hasRecordings) {
-                        hours.push(item);
-                    }
-                }
-            }
-            
-            return hours.sort(); // Chronological order
-        } catch (error) {
-            logger.error(`Failed to get available hours for camera ${cameraId} on ${date}:`, error);
-            return [];
-        }
-    }
-
-    // Check if a live stream exists and is healthy
-    async getLiveStreamHealth(cameraId) {
-        try {
-            const livePlaylist = this.getLivePlaylistPath(cameraId);
-            
-            if (!await fs.pathExists(livePlaylist)) {
-                return {
-                    healthy: false,
-                    error: 'Live playlist not found',
-                    lastCheck: moment().toISOString()
-                };
-            }
-            
-            const stats = await fs.stat(livePlaylist);
-            const age = moment().diff(moment(stats.mtime), 'seconds');
-            
-            // Check for recent segments
-            const liveDir = this.getLiveDir(cameraId);
-            const files = await fs.readdir(liveDir);
-            const segments = files.filter(f => f.endsWith('.ts'));
-            
-            return {
-                healthy: age < 30 && segments.length > 0,
-                lastModified: stats.mtime,
-                ageSeconds: age,
-                segmentCount: segments.length,
-                lastCheck: moment().toISOString()
-            };
-        } catch (error) {
-            return {
-                healthy: false,
-                error: error.message,
-                lastCheck: moment().toISOString()
-            };
-        }
-    }
-
-    // Get stream health information (alias for backward compatibility)
-    async getStreamHealth(cameraId) {
-        return this.getLiveStreamHealth(cameraId);
-    }
-
-    // Check if a recording exists for specific date and hour
-    async recordingExists(cameraId, date, hour) {
-        try {
-            const recordingPlaylist = this.getRecordingPlaylistPath(cameraId, date, hour);
-            return await fs.pathExists(recordingPlaylist);
-        } catch (error) {
-            return false;
-        }
-    }
-
     // Get recording stats for specific date and hour
     async getRecordingStats(cameraId, date, hour) {
         try {
-            const recordingDir = this.getRecordingsDir(cameraId, date, hour);
+            const recordingDir = this.getRecordingDir(cameraId, date, hour);
             
             if (!await fs.pathExists(recordingDir)) {
                 return null;
@@ -265,9 +307,9 @@ class PathUtils {
     // Get camera storage statistics
     async getCameraStorageStats(cameraId) {
         try {
-            const cameraDir = path.join(config.hlsPath, cameraId.toString());
+            const cameraDir = this.getCameraDir(cameraId);
             const liveDir = this.getLiveDir(cameraId);
-            const recordingsDir = path.join(cameraDir, 'recordings');
+            const recordingsDir = this.getRecordingsBaseDir(cameraId);
             
             const liveSize = await this.getDirectorySize(liveDir);
             const recordingsSize = await this.getDirectorySize(recordingsDir);
@@ -379,7 +421,7 @@ class PathUtils {
         const urls = [];
         
         for (const timePoint of timeRange) {
-            const exists = await this.recordingExists(cameraId, timePoint.date, timePoint.hour);
+            const exists = await this.hasValidRecordings(cameraId, timePoint.date, timePoint.hour);
             
             if (exists) {
                 urls.push({
@@ -404,16 +446,6 @@ class PathUtils {
         return config.cameraIds.includes(cameraId.toString());
     }
 
-    // Validate date format (YYYY-MM-DD)
-    isValidDate(date) {
-        return moment(date, 'YYYY-MM-DD', true).isValid();
-    }
-
-    // Validate hour format (HH)
-    isValidHour(hour) {
-        return /^\d{2}$/.test(hour) && parseInt(hour) >= 0 && parseInt(hour) <= 23;
-    }
-
     // Get recent hours (for dashboard)
     getRecentHours(count = 24) {
         const hours = [];
@@ -432,51 +464,6 @@ class PathUtils {
         
         return hours;
     }
-
-    // Clean up empty directories
-    async cleanupEmptyDirectories(cameraId) {
-        try {
-            const recordingsDir = path.join(config.hlsPath, cameraId.toString(), 'recordings');
-            
-            if (!await fs.pathExists(recordingsDir)) {
-                return;
-            }
-            
-            const dates = await fs.readdir(recordingsDir);
-            
-            for (const date of dates) {
-                const dateDir = path.join(recordingsDir, date);
-                const hours = await fs.readdir(dateDir);
-                
-                // Remove empty hour directories
-                for (const hour of hours) {
-                    const hourDir = path.join(dateDir, hour);
-                    const files = await fs.readdir(hourDir);
-                    
-                    if (files.length === 0) {
-                        await fs.remove(hourDir);
-                        logger.debug(`Removed empty hour directory: ${hourDir}`);
-                    }
-                }
-                
-                // Remove empty date directories
-                const remainingHours = await fs.readdir(dateDir);
-                if (remainingHours.length === 0) {
-                    await fs.remove(dateDir);
-                    logger.debug(`Removed empty date directory: ${dateDir}`);
-                }
-            }
-        } catch (error) {
-            logger.error(`Failed to cleanup empty directories for camera ${cameraId}:`, error);
-        }
-    }
-
-    // Cleanup all empty directories
-    async cleanupAllEmptyDirectories() {
-        for (const cameraId of config.cameraIds) {
-            await this.cleanupEmptyDirectories(cameraId);
-        }
-    }
 }
 
-module.exports = { PathUtils }; 
+module.exports = new PathUtils(); 

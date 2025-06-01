@@ -107,99 +107,54 @@ class StreamManager {
         logger.debug(`   📁 ${recordingsDir}`);
     }
 
-    // Get FFmpeg command for dual output (live streaming + recording)
+    // Get FFmpeg command for live streaming
     getDualOutputCommand(cameraId) {
         const cameraDir = path.join(config.paths.hls, cameraId.toString());
         const liveDir = path.join(cameraDir, 'live');
-        const recordingsBaseDir = path.join(cameraDir, 'recordings');
         
         // Ensure directories exist
         fs.ensureDirSync(liveDir);
-        fs.ensureDirSync(recordingsBaseDir);
         
-        const date = moment().format('YYYY-MM-DD');
-        const hour = moment().format('HH');
-        const recordingsDir = path.join(recordingsBaseDir, date, hour);
-        fs.ensureDirSync(recordingsDir);
-        
-        logger.info(`Setting up stream for camera ${cameraId}:`);
+        logger.info(`Setting up live stream for camera ${cameraId}:`);
         logger.info(`Live: ${liveDir}`);
-        logger.info(`Recordings: ${recordingsDir}`);
         
-        const rtspUrl = this.getRtspUrl(cameraId);
+        const rtspUrl = config.getRtspUrl(cameraId);
         
-        // Enhanced stream configuration with improved HEVC handling
+        // Optimized FFmpeg configuration for Hikvision cameras
         const args = [
             '-y',  // Overwrite output files
             
-            // Input options with enhanced error recovery
+            // Input options optimized for Hikvision
             '-rtsp_transport', 'tcp',
             '-user_agent', 'SecurityCam/1.0',
-            '-stimeout', '5000000',  // 5 second timeout
-            '-reconnect', '1',
-            '-reconnect_at_eof', '1',
-            '-reconnect_streamed', '1',
-            '-reconnect_delay_max', '30',  // Maximum 30 seconds between reconnection attempts
             
-            // Extended analysis time for better stream detection
-            '-analyzeduration', '20000000',  // 20 seconds
-            '-probesize', '20000000',
+            // Fast initial connection
+            '-analyzeduration', '2000000',  // 2 seconds
+            '-probesize', '2000000',
             
-            // Input options for better stream handling
+            // Input options
             '-i', rtspUrl,
             
-            // Input buffer and sync options with enhanced buffering
-            '-fflags', '+genpts+discardcorrupt+nobuffer+igndts',
+            // Buffer settings for low latency
+            '-fflags', '+genpts+igndts+nobuffer',
             '-flags', 'low_delay',
             '-strict', 'experimental',
             '-avoid_negative_ts', 'make_zero',
-            '-max_delay', '5000000',
-            '-rtbufsize', '512M',
+            '-max_delay', '2000000',  // 2 seconds max delay
+            '-rtbufsize', '100M',
             
-            // Force H.264 transcoding with optimized settings for HEVC source
-            '-c:v', 'libx264',
-            '-preset', 'superfast',
-            '-tune', 'zerolatency',
-            '-profile:v', 'baseline',
-            '-level', '3.0',
-            '-b:v', '2M',
-            '-maxrate', '2.5M',
-            '-bufsize', '5M',
-            '-g', '60',
-            '-keyint_min', '60',
-            '-sc_threshold', '0',
-            '-refs', '1',
-            '-trellis', '0',
-            '-subq', '1',
-            '-me_range', '16',
-            '-bf', '0',
-            '-weightp', '0',
-            '-x264opts', 'no-mbtree:no-scenecut:sync-lookahead=0',
-            
-            // Enhanced error resilience
-            '-err_detect', 'aggressive',
-            '-max_error_rate', '0.0',
-            
-            // Audio transcoding (if present)
-            '-c:a', 'aac',
-            '-b:a', '128k',
-            '-ar', '44100',
-            '-ac', '2',
-            
-            // Map all streams
+            // Native quality - just copy streams
+            '-c', 'copy',
             '-map', '0',
             
-            // Enhanced HLS output settings
+            // HLS output for live streaming
             '-f', 'hls',
             '-hls_time', '2',
-            '-hls_list_size', '6',
-            '-hls_flags', 'delete_segments+append_list+omit_endlist+independent_segments+program_date_time+temp_file',
+            '-hls_list_size', '3',
+            '-hls_flags', 'delete_segments+append_list+omit_endlist+independent_segments',
             '-hls_segment_type', 'mpegts',
             '-hls_allow_cache', '0',
-            '-hls_playlist_type', 'event',
             '-hls_segment_filename', path.join(liveDir, 'segment%d.ts'),
-            '-strftime', '1',  // Enable strftime in segment names
-            '-hls_segment_options', 'movflags=+faststart',  // Optimize segments for fast start
             path.join(liveDir, 'live.m3u8')
         ];
 
@@ -217,30 +172,27 @@ class StreamManager {
             const recordingsDir = path.join(recordingsBaseDir, date, hour);
             fs.ensureDirSync(recordingsDir);
             
-            const rtspUrl = this.getRtspUrl(cameraId);
+            const rtspUrl = config.getRtspUrl(cameraId);
             
-            // Enhanced recording process with improved stability and HEVC handling
+            // Optimized recording process for Hikvision
             const recordingArgs = [
                 '-y',
                 '-rtsp_transport', 'tcp',
                 '-user_agent', 'SecurityCam/1.0',
                 
-                // Input options
-                '-analyzeduration', '10000000',
-                '-probesize', '10000000',
+                // Fast initial connection
+                '-analyzeduration', '2000000',
+                '-probesize', '2000000',
                 '-i', rtspUrl,
                 
-                // Input buffer and sync options
-                '-fflags', '+genpts+igndts+nobuffer',
-                '-flags', 'low_delay',
-                '-strict', 'experimental',
+                // Buffer settings for stability
+                '-fflags', '+genpts+igndts',
                 '-avoid_negative_ts', 'make_zero',
                 '-max_delay', '5000000',
-                '-rtbufsize', '256M',
+                '-rtbufsize', '100M',
                 
                 // Native quality - copy all streams
                 '-c', 'copy',
-                '-tag:v', 'hvc1',
                 '-map', '0',
                 
                 // Recording HLS output
@@ -607,6 +559,7 @@ class StreamManager {
         return status;
     }
 
+    // Enhanced stream health check
     async checkStreamHealth() {
         logger.debug('Checking stream health for all cameras...');
         
@@ -615,26 +568,29 @@ class StreamManager {
                 const status = await this.checkStreamFile(cameraId);
                 const currentStatus = this.getStreamStatus(cameraId);
                 
-                if (!status.healthy && currentStatus === 'running') {
+                if (!status.healthy) {
                     logger.warn(`Stream health check failed for camera ${cameraId}:`, status.reason);
                     
                     // Check if process is actually running
                     if (process && !process.killed) {
                         const attempts = this.getRestartAttempts(cameraId);
                         
-                        if (attempts < 3) {
+                        if (attempts < 2) { // Reduced max attempts
                             logger.info(`Attempting to restart stream for camera ${cameraId} (attempt ${attempts + 1})`);
                             await this.restartStream(cameraId);
                         } else {
                             logger.error(`Stream for camera ${cameraId} failed after ${attempts} restart attempts`);
                             this.updateStreamStatus(cameraId, 'failed');
-                            // Notify any monitoring system here
+                            // Notify dashboard
+                            this.emit('stream:failed', { cameraId, reason: status.reason });
                         }
                     }
                 } else if (status.healthy && currentStatus !== 'running') {
                     logger.info(`Stream recovered for camera ${cameraId}`);
                     this.updateStreamStatus(cameraId, 'running');
                     this.resetRestartAttempts(cameraId);
+                    // Notify dashboard
+                    this.emit('stream:recovered', { cameraId });
                 }
             } catch (error) {
                 logger.error(`Error checking stream health for camera ${cameraId}:`, error);
@@ -642,8 +598,9 @@ class StreamManager {
         }
     }
 
+    // Enhanced stream file check
     async checkStreamFile(cameraId) {
-        const liveDir = this.getLiveDirectory(cameraId);
+        const liveDir = path.join(config.hlsPath, cameraId.toString(), 'live');
         const m3u8Path = path.join(liveDir, 'live.m3u8');
         
         try {
@@ -671,14 +628,14 @@ class StreamManager {
             const stats = await fs.stat(segmentPath);
             const age = Date.now() - stats.mtimeMs;
             
-            // If latest segment is too old (more than 10 seconds)
-            if (age > 10000) {
-                return { healthy: false, reason: 'Segments not updating' };
+            // If latest segment is too old (more than 6 seconds for live)
+            if (age > 6000) {
+                return { healthy: false, reason: 'Stream not updating' };
             }
             
-            // Check segment size
-            if (stats.size < 1000) {  // Less than 1KB
-                return { healthy: false, reason: 'Segment too small' };
+            // Check segment size (at least 10KB for valid video)
+            if (stats.size < 10000) {
+                return { healthy: false, reason: 'Invalid segment size' };
             }
             
             return { healthy: true };

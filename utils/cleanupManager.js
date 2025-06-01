@@ -3,6 +3,7 @@ const path = require('path');
 const moment = require('moment');
 const schedule = require('node-schedule');
 const config = require('./config');
+const pathUtils = require('./pathUtils');
 const { logger } = require('./logger');
 
 class CleanupManager {
@@ -60,12 +61,23 @@ class CleanupManager {
 
             // Clean up each camera
             for (const cameraId of config.cameraIds) {
+                // First validate and fix directory structure
+                const validation = await pathUtils.validateStructure(cameraId);
+                if (!validation.valid) {
+                    logger.warn(`Invalid directory structure for camera ${cameraId}:`, validation.errors);
+                    await pathUtils.ensureCameraStructure(cameraId);
+                }
+
+                // Clean up old recordings
                 const cameraStats = await this.cleanupCamera(cameraId);
                 stats.cameraStats[cameraId] = cameraStats;
                 stats.totalDirsChecked += cameraStats.dirsChecked;
                 stats.totalFilesDeleted += cameraStats.filesDeleted;
                 stats.totalDirsDeleted += cameraStats.dirsDeleted;
                 stats.totalBytesFreed += cameraStats.bytesFreed;
+
+                // Clean up empty directories
+                await pathUtils.cleanupEmptyDirs(cameraId);
             }
 
             const duration = Date.now() - startTime;
@@ -83,7 +95,7 @@ class CleanupManager {
 
     // Clean up segments for a specific camera
     async cleanupCamera(cameraId) {
-        const cameraPath = path.join(config.hlsPath, cameraId.toString());
+        const recordingsDir = pathUtils.getRecordingsBaseDir(cameraId);
         const stats = {
             dirsChecked: 0,
             filesDeleted: 0,
@@ -91,41 +103,39 @@ class CleanupManager {
             bytesFreed: 0
         };
 
-        if (!await fs.pathExists(cameraPath)) {
+        if (!await fs.pathExists(recordingsDir)) {
             return stats;
         }
 
-        // Only process recordings directory, not live directory
-        const recordingsPath = path.join(cameraPath, 'recordings');
-        if (!await fs.pathExists(recordingsPath)) {
-            return stats;
-        }
-
-        const items = await fs.readdir(recordingsPath);
+        const dates = await fs.readdir(recordingsDir);
         
-        for (const item of items) {
-            // Skip non-date directories like 'live' or 'recordings'
-            if (!this.isValidDateDirectory(item)) {
-                logger.debug(`Skipping non-date directory: ${item}`);
+        for (const date of dates) {
+            if (!pathUtils.isValidDate(date)) {
+                logger.debug(`Skipping invalid date directory: ${date}`);
                 continue;
             }
 
-            const itemPath = path.join(recordingsPath, item);
-            const itemStats = await fs.stat(itemPath);
+            const dateDir = path.join(recordingsDir, date);
+            const itemStats = await fs.stat(dateDir);
             
             if (itemStats.isDirectory()) {
                 stats.dirsChecked++;
-                const itemDate = moment(item, 'YYYY-MM-DD');
+                const itemDate = moment(date, 'YYYY-MM-DD');
                 
                 if (itemDate.isValid()) {
                     const daysDiff = moment().diff(itemDate, 'days');
                     
                     if (daysDiff >= config.retentionDays) {
-                        logger.info(`Deleting old recordings for camera ${cameraId}, date: ${item}`);
-                        const deletedStats = await this.deleteRecursively(itemPath);
+                        logger.info(`Deleting old recordings for camera ${cameraId}, date: ${date}`);
+                        const deletedStats = await this.deleteRecursively(dateDir);
                         stats.filesDeleted += deletedStats.filesDeleted;
                         stats.dirsDeleted += deletedStats.dirsDeleted;
                         stats.bytesFreed += deletedStats.bytesFreed;
+                    } else {
+                        // For current dates, clean up old segments
+                        const hourStats = await this.cleanupDateDirectory(cameraId, date, dateDir);
+                        stats.filesDeleted += hourStats.filesDeleted;
+                        stats.bytesFreed += hourStats.bytesFreed;
                     }
                 }
             }
@@ -134,9 +144,62 @@ class CleanupManager {
         return stats;
     }
 
-    // Check if directory name is a valid date format
-    isValidDateDirectory(dirName) {
-        return moment(dirName, 'YYYY-MM-DD', true).isValid();
+    // Clean up segments within a date directory
+    async cleanupDateDirectory(cameraId, dateDir, datePath) {
+        const stats = {
+            filesDeleted: 0,
+            bytesFreed: 0
+        };
+
+        try {
+            const hours = await fs.readdir(datePath);
+            const now = moment();
+            const dirDate = moment(dateDir, 'YYYY-MM-DD');
+            
+            for (const hour of hours) {
+                if (!pathUtils.isValidHour(hour)) continue;
+                
+                const hourDir = path.join(datePath, hour);
+                const files = await fs.readdir(hourDir);
+                
+                for (const file of files) {
+                    if (!this.isValidSegmentFile(file)) {
+                        // Remove invalid files
+                        const filePath = path.join(hourDir, file);
+                        await fs.remove(filePath);
+                        stats.filesDeleted++;
+                        continue;
+                    }
+
+                    const filePath = path.join(hourDir, file);
+                    const fileStat = await fs.stat(filePath);
+                    
+                    // For current date, keep files from last few hours
+                    if (dirDate.isSame(now, 'day')) {
+                        const fileHour = parseInt(hour);
+                        const currentHour = parseInt(now.format('HH'));
+                        const hourDiff = currentHour - fileHour;
+                        
+                        // Keep files from last 6 hours
+                        if (hourDiff < 6) {
+                            continue;
+                        }
+                    }
+                    
+                    // Delete segments older than retention period
+                    const fileAge = now.diff(moment(fileStat.mtime), 'days');
+                    if (fileAge >= config.retentionDays) {
+                        stats.bytesFreed += fileStat.size;
+                        await fs.remove(filePath);
+                        stats.filesDeleted++;
+                    }
+                }
+            }
+        } catch (error) {
+            logger.error(`Failed to cleanup date directory ${cameraId}/${dateDir}:`, error);
+        }
+
+        return stats;
     }
 
     // Recursively delete directory and count stats
@@ -168,90 +231,6 @@ class CleanupManager {
             
             await fs.remove(dirPath);
             stats.dirsDeleted++;
-        } catch (error) {
-            logger.error(`Failed to delete directory ${dirPath}:`, error);
-        }
-
-        return stats;
-    }
-
-    // Clean up segments within a date directory (for partial day cleanup)
-    async cleanupDateDirectory(cameraId, dateDir, datePath) {
-        const stats = {
-            filesDeleted: 0,
-            bytesFreed: 0
-        };
-
-        try {
-            const files = await fs.readdir(datePath);
-            const now = moment();
-            const dirDate = moment(dateDir, 'YYYY-MM-DD');
-            
-            for (const file of files) {
-                const filePath = path.join(datePath, file);
-                const fileStat = await fs.stat(filePath);
-                
-                if (fileStat.isFile() && (file.endsWith('.m3u8') || file.endsWith('.ts'))) {
-                    // For current date, keep files from last few hours
-                    if (dirDate.isSame(now, 'day')) {
-                        const fileHour = this.extractHourFromFilename(file);
-                        if (fileHour) {
-                            const fileTime = dirDate.clone().add(fileHour.hour, 'hours').add(fileHour.minute, 'minutes');
-                            const ageHours = now.diff(fileTime, 'hours');
-                            
-                            // Keep files from last 6 hours to ensure current streams are not affected
-                            if (ageHours < 6) {
-                                continue;
-                            }
-                        }
-                    }
-                    
-                    // Check if file is too old based on more granular rules
-                    const fileAge = now.diff(moment(fileStat.mtime), 'hours');
-                    
-                    // Delete segments older than retention + safety margin
-                    if (fileAge > (config.retentionDays * 24 + 6)) {
-                        stats.bytesFreed += fileStat.size;
-                        await fs.remove(filePath);
-                        stats.filesDeleted++;
-                        
-                        logger.debug(`Deleted old segment: ${cameraId}/${dateDir}/${file}`);
-                    }
-                }
-            }
-
-        } catch (error) {
-            logger.error(`Failed to cleanup date directory ${cameraId}/${dateDir}:`, error);
-        }
-
-        return stats;
-    }
-
-    // Delete entire directory and return stats
-    async deleteDirectory(dirPath) {
-        const stats = {
-            filesDeleted: 0,
-            bytesFreed: 0
-        };
-
-        try {
-            const items = await fs.readdir(dirPath);
-            
-            for (const item of items) {
-                const itemPath = path.join(dirPath, item);
-                const itemStat = await fs.stat(itemPath);
-                
-                if (itemStat.isFile()) {
-                    stats.filesDeleted++;
-                    stats.bytesFreed += itemStat.size;
-                } else if (itemStat.isDirectory()) {
-                    const subStats = await this.deleteDirectory(itemPath);
-                    stats.filesDeleted += subStats.filesDeleted;
-                    stats.bytesFreed += subStats.bytesFreed;
-                }
-            }
-            
-            await fs.remove(dirPath);
             
         } catch (error) {
             logger.error(`Failed to delete directory ${dirPath}:`, error);
@@ -260,16 +239,14 @@ class CleanupManager {
         return stats;
     }
 
-    // Extract hour and minute from filename (HH-mm format)
-    extractHourFromFilename(filename) {
-        const match = filename.match(/^(\d{2})-(\d{2})/);
-        if (match) {
-            return {
-                hour: parseInt(match[1]),
-                minute: parseInt(match[2])
-            };
-        }
-        return null;
+    // Check if file matches expected segment patterns
+    isValidSegmentFile(filename) {
+        const patterns = [
+            /^\d{2}\.ts$/,      // Recording segments: 00.ts, 01.ts, etc.
+            /^playlist\.m3u8$/  // Recording playlist
+        ];
+        
+        return patterns.some(pattern => pattern.test(filename));
     }
 
     // Force cleanup all old files beyond retention
@@ -469,16 +446,37 @@ class CleanupManager {
         return stats;
     }
 
-    // Check if file matches expected segment patterns
-    isValidSegmentFile(filename) {
-        // Valid patterns: *.ts, *.m3u8 (native quality segments)
-        const patterns = [
-            /^\d{2}\.ts$/,      // Recording segments: 00.ts, 01.ts, etc.
-            /^segment\d+\.ts$/, // Live segments: segment0.ts, segment1.ts, etc.
-            /^.*\.m3u8$/        // Any playlist files
-        ];
-        
-        return patterns.some(pattern => pattern.test(filename));
+    // Delete entire directory and return stats
+    async deleteDirectory(dirPath) {
+        const stats = {
+            filesDeleted: 0,
+            bytesFreed: 0
+        };
+
+        try {
+            const items = await fs.readdir(dirPath);
+            
+            for (const item of items) {
+                const itemPath = path.join(dirPath, item);
+                const itemStat = await fs.stat(itemPath);
+                
+                if (itemStat.isFile()) {
+                    stats.filesDeleted++;
+                    stats.bytesFreed += itemStat.size;
+                } else if (itemStat.isDirectory()) {
+                    const subStats = await this.deleteDirectory(itemPath);
+                    stats.filesDeleted += subStats.filesDeleted;
+                    stats.bytesFreed += subStats.bytesFreed;
+                }
+            }
+            
+            await fs.remove(dirPath);
+            
+        } catch (error) {
+            logger.error(`Failed to delete directory ${dirPath}:`, error);
+        }
+
+        return stats;
     }
 }
 

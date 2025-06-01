@@ -52,7 +52,7 @@ class PathUtils {
 
     // Get camera base directory
     getCameraDir(cameraId) {
-        return path.join(config.hlsPath, cameraId.toString());
+        return path.join(config.paths.hls, cameraId.toString());
     }
 
     // Get live streaming directory
@@ -68,6 +68,11 @@ class PathUtils {
     // Get specific recording directory
     getRecordingDir(cameraId, date, hour) {
         return path.join(this.getRecordingsBaseDir(cameraId), date, hour);
+    }
+
+    // Alias for getRecordingDir (for backward compatibility)
+    getRecordingsDir(cameraId, date, hour) {
+        return this.getRecordingDir(cameraId, date, hour);
     }
 
     // Get live stream playlist path
@@ -463,6 +468,76 @@ class PathUtils {
         }
         
         return hours;
+    }
+
+    // Check if recording exists for specific date and hour
+    async recordingExists(cameraId, date, hour) {
+        const hourDir = this.getRecordingDir(cameraId, date, hour);
+        
+        try {
+            if (!await fs.pathExists(hourDir)) {
+                return false;
+            }
+            
+            const files = await fs.readdir(hourDir);
+            const hasSegments = files.some(f => f.endsWith('.ts'));
+            const hasPlaylist = files.some(f => f.endsWith('.m3u8'));
+            
+            return hasSegments && hasPlaylist;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    // Get live stream health check
+    async getLiveStreamHealth(cameraId) {
+        const liveDir = this.getLiveDir(cameraId);
+        const playlistPath = this.getLivePlaylistPath(cameraId);
+        
+        try {
+            // Check if playlist exists
+            if (!await fs.pathExists(playlistPath)) {
+                return { healthy: false, reason: 'Playlist file missing' };
+            }
+            
+            // Read playlist content
+            const content = await fs.readFile(playlistPath, 'utf8');
+            const segments = content.match(/segment\d+\.ts/g) || [];
+            
+            if (segments.length === 0) {
+                return { healthy: false, reason: 'No segments in playlist' };
+            }
+            
+            // Check latest segment
+            const latestSegment = segments[segments.length - 1];
+            const segmentPath = path.join(liveDir, latestSegment);
+            
+            if (!await fs.pathExists(segmentPath)) {
+                return { healthy: false, reason: 'Latest segment missing' };
+            }
+            
+            const stats = await fs.stat(segmentPath);
+            const age = Date.now() - stats.mtimeMs;
+            
+            // If latest segment is too old (more than 10 seconds for live)
+            if (age > 10000) {
+                return { healthy: false, reason: 'Stream not updating' };
+            }
+            
+            // Check segment size (at least 5KB for valid video)
+            if (stats.size < 5000) {
+                return { healthy: false, reason: 'Invalid segment size' };
+            }
+            
+            return { 
+                healthy: true, 
+                lastSegmentAge: age,
+                segmentCount: segments.length,
+                lastSegmentSize: stats.size
+            };
+        } catch (error) {
+            return { healthy: false, reason: `Health check error: ${error.message}` };
+        }
     }
 }
 

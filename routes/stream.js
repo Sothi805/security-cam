@@ -3,11 +3,10 @@ const moment = require('moment');
 const config = require('../utils/config');
 const streamManager = require('../utils/streamManager');
 const cleanupManager = require('../utils/cleanupManager');
-const { PathUtils } = require('../utils/pathUtils');
+const pathUtils = require('../utils/pathUtils');
 const { logger } = require('../utils/logger');
 
 const router = express.Router();
-const pathUtils = new PathUtils();
 
 /**
  * GET /cameras

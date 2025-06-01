@@ -301,7 +301,7 @@ class CleanupManager {
         };
 
         try {
-            const cameraDir = config.getCameraDirectory(cameraId);
+            const cameraDir = pathUtils.getCameraDir(cameraId);
             
             if (!await fs.pathExists(cameraDir)) {
                 return stats;
@@ -352,7 +352,7 @@ class CleanupManager {
     // Get available storage space information
     async getStorageInfo() {
         try {
-            const hlsPath = config.hlsPath;
+            const hlsPath = config.paths.hls;
             const stats = await fs.stat(hlsPath);
             
             // This is a simplified storage check - in production you might want
@@ -366,7 +366,7 @@ class CleanupManager {
         } catch (error) {
             logger.error('Failed to get storage info:', error);
             return {
-                hlsPath: config.hlsPath,
+                hlsPath: config.paths.hls,
                 accessible: false,
                 error: error.message,
                 lastCheck: moment().toISOString()
@@ -385,7 +385,7 @@ class CleanupManager {
 
         try {
             for (const cameraId of config.cameraIds) {
-                const cameraDir = config.getCameraDirectory(cameraId);
+                const cameraDir = pathUtils.getCameraDir(cameraId);
                 
                 if (!await fs.pathExists(cameraDir)) {
                     continue;
